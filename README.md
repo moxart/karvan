@@ -163,3 +163,7 @@ pkexec ~/.local/bin/karvan --root-setup
 **Cannot log in after enabling Key login only**
 Sit at that computer, open Karvan, and run **🛡️ Key login only** again to
 turn password login back on.
+
+## License
+
+[MIT](LICENSE)
