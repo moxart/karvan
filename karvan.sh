@@ -100,7 +100,7 @@ setup_this_computer() {
     return
   fi
 
-  info "Setup complete ✅\n\nThis computer's network name:\n<b>$(hostname).local</b>\n\nIP:\n<b>$(hostname -I | awk '{print $1}')</b>\n\nNow do the same on the other computer."
+  info "Setup complete ✅\n\nThis computer's network name:\n<b>$(hostname).local</b>\n\nUsername:\n<b>$USER</b>\n\nIP:\n<b>$(hostname -I | awk '{print $1}')</b>\n\nNow do the same on the other computer."
 }
 
 # Output: lines of the form  name|hostname|ip
@@ -151,7 +151,7 @@ pick_computer() {
 ask_username() {
   local user
   user="$(zenity --entry --title="$APP" --width=420 \
-    --text="Username on <b>$1</b>:" --entry-text="$USER" 2>/dev/null)" || return 1
+    --text="Your username on <b>$1</b>:\n(it may differ from your username on this computer)" --entry-text="$USER" 2>/dev/null)" || return 1
   if ! is_safe_name "$user"; then
     error "Invalid username."
     return 1
@@ -185,7 +185,7 @@ setup_passwordless() {
       ssh-copy-id -o StrictHostKeyChecking=accept-new "$user@$host" </dev/null >/dev/null 2>&1; then
     info "Done ✅\nConnecting to <b>$host</b> will no longer ask for a password."
   else
-    error "Could not connect to $host.\n\n• Has Setup been run on that computer?\n• Were the username and password correct?"
+    error "Could not connect to $host.\n\n• Has Setup been run on that computer?\n• Is the username the one used <b>on that computer</b>?\n• Was the password correct?"
   fi
 }
 

@@ -68,7 +68,8 @@ Once both computers are set up, they can see each other.
 1. Open Karvan and choose **📂 Open files on another computer**.
 2. Pick the computer from the list. If it is not listed, choose
    **✏️ Enter manually** and type its name or IP address.
-3. Enter your username on that computer.
+3. Enter your username **on that computer**. It is shown at the end of setup
+   on that computer, and it may differ from your username on this one.
 4. Enter that computer's password when Files asks for it.
 
 Its home folder opens in Files. You can copy, open and edit the files as if
@@ -142,6 +143,10 @@ sudo systemctl disable --now ssh
 - Make sure setup has been run on that computer.
 - Some routers block mDNS. Choose **✏️ Enter manually** and use the IP address
   shown at the end of setup.
+
+**"You don't have permission to access the requested location"**
+You probably entered the wrong username. Use the username of the account on
+the *other* computer, not the one on this computer.
 
 **The IP address keeps changing**
 In your router settings, reserve a fixed IP for each computer (often called
