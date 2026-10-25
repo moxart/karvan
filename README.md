@@ -48,8 +48,9 @@ download the ZIP from GitHub (**Code → Download ZIP**) and extract it.
 bash karvan.sh --install
 ```
 
-This copies Karvan to `~/.local/bin/karvan` and adds **Karvan** to your
-applications menu. You can delete the cloned folder afterwards.
+This copies Karvan to `~/.local/bin/karvan`, installs its icon and adds
+**Karvan** to your applications menu. You can delete the cloned folder
+afterwards.
 
 ### 3. Set up the computer
 
@@ -163,6 +164,14 @@ pkexec ~/.local/bin/karvan --root-setup
 **Cannot log in after enabling Key login only**
 Sit at that computer, open Karvan, and run **🛡️ Key login only** again to
 turn password login back on.
+
+## Credits
+
+The icon is made from *Head of Asiatic Camel*, an engraving by an unknown
+artist (initials R.R.) in *Central Asia: Travels in Cashmere, Little Thibet and
+Central Asia*, compiled by Bayard Taylor (Scribner, 1891). It is in the public
+domain; the scan is from
+[Wikimedia Commons](https://commons.wikimedia.org/wiki/File:Head_of_Bactrian_Camel.jpg).
 
 ## License
 

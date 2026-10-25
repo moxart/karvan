@@ -17,6 +17,7 @@ SSHD_KEYS_ONLY="/etc/ssh/sshd_config.d/10-karvan-keys-only.conf"
 LAN_RANGES=(192.168.0.0/16 10.0.0.0/8 172.16.0.0/12 fe80::/10 fd00::/8)
 LAUNCHER_BIN="$HOME/.local/bin/karvan"
 LAUNCHER_DESKTOP="$HOME/.local/share/applications/karvan.desktop"
+LAUNCHER_ICON="$HOME/.local/share/icons/hicolor/512x512/apps/karvan.png"
 
 # Names coming from the network or the user must use safe characters only
 # (prevents option injection into ssh and unsafe characters in URLs and bookmarks)
@@ -207,16 +208,24 @@ toggle_password_login() {
 
 install_launcher() {
   set -e
-  mkdir -p "$(dirname "$LAUNCHER_BIN")" "$(dirname "$LAUNCHER_DESKTOP")"
+  mkdir -p "$(dirname "$LAUNCHER_BIN")" "$(dirname "$LAUNCHER_DESKTOP")" "$(dirname "$LAUNCHER_ICON")"
   [ "$SELF" = "$LAUNCHER_BIN" ] || cp "$SELF" "$LAUNCHER_BIN"
   chmod +x "$LAUNCHER_BIN"
+  # The icon ships next to karvan.sh; a reinstall from ~/.local/bin keeps the one already installed
+  local icon_src
+  icon_src="$(dirname "$SELF")/karvan.png"
+  if [ -f "$icon_src" ]; then
+    cp "$icon_src" "$LAUNCHER_ICON"
+  fi
+  local icon="folder-remote"
+  [ -f "$LAUNCHER_ICON" ] && icon="$LAUNCHER_ICON"
   cat > "$LAUNCHER_DESKTOP" <<EOF
 [Desktop Entry]
 Type=Application
 Name=$APP
 Comment=Access files on other computers at home
 Exec=$LAUNCHER_BIN
-Icon=folder-remote
+Icon=$icon
 Terminal=false
 Categories=Network;FileTransfer;
 EOF
@@ -224,7 +233,7 @@ EOF
 }
 
 uninstall_launcher() {
-  rm -f "$LAUNCHER_BIN" "$LAUNCHER_DESKTOP"
+  rm -f "$LAUNCHER_BIN" "$LAUNCHER_DESKTOP" "$LAUNCHER_ICON"
   echo "Removed $APP from your applications menu."
   echo "System settings made by Setup are left in place; see README.md to remove them."
 }
