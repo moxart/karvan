@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="karvan.png" alt="Karvan icon: an engraving of a Bactrian camel's head" width="128">
+</p>
+
 # Karvan
 
 Browse the files of another Ubuntu computer on your home network from the

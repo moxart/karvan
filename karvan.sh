@@ -219,6 +219,7 @@ install_launcher() {
   fi
   local icon="folder-remote"
   [ -f "$LAUNCHER_ICON" ] && icon="$LAUNCHER_ICON"
+  # Karvan's windows are zenity windows; StartupWMClass makes the dock show them under Karvan
   cat > "$LAUNCHER_DESKTOP" <<EOF
 [Desktop Entry]
 Type=Application
@@ -226,6 +227,7 @@ Name=$APP
 Comment=Access files on other computers at home
 Exec=$LAUNCHER_BIN
 Icon=$icon
+StartupWMClass=org.gnome.Zenity
 Terminal=false
 Categories=Network;FileTransfer;
 EOF
