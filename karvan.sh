@@ -17,7 +17,8 @@ SSHD_KEYS_ONLY="/etc/ssh/sshd_config.d/10-karvan-keys-only.conf"
 LAN_RANGES=(192.168.0.0/16 10.0.0.0/8 172.16.0.0/12 fe80::/10 fd00::/8)
 LAUNCHER_BIN="$HOME/.local/bin/karvan"
 LAUNCHER_DESKTOP="$HOME/.local/share/applications/karvan.desktop"
-LAUNCHER_ICON="$HOME/.local/share/icons/hicolor/512x512/apps/karvan.png"
+LAUNCHER_ICON_THEME="$HOME/.local/share/icons/hicolor"
+LAUNCHER_ICON="$LAUNCHER_ICON_THEME/256x256/apps/karvan.png"
 
 # Names coming from the network or the user must use safe characters only
 # (prevents option injection into ssh and unsafe characters in URLs and bookmarks)
@@ -206,6 +207,13 @@ toggle_password_login() {
   fi
 }
 
+# An existing icon cache hides icons it doesn't list, so rebuild it; with no cache, icons are found directly
+refresh_icon_cache() {
+  if [ -f "$LAUNCHER_ICON_THEME/icon-theme.cache" ] && command -v gtk-update-icon-cache >/dev/null; then
+    gtk-update-icon-cache --force --ignore-theme-index --quiet "$LAUNCHER_ICON_THEME" || true
+  fi
+}
+
 install_launcher() {
   set -e
   mkdir -p "$(dirname "$LAUNCHER_BIN")" "$(dirname "$LAUNCHER_DESKTOP")" "$(dirname "$LAUNCHER_ICON")"
@@ -217,8 +225,11 @@ install_launcher() {
   if [ -f "$icon_src" ]; then
     cp "$icon_src" "$LAUNCHER_ICON"
   fi
+  # Earlier versions installed a 512px icon by file path
+  rm -f "$LAUNCHER_ICON_THEME/512x512/apps/karvan.png"
+  refresh_icon_cache
   local icon="folder-remote"
-  [ -f "$LAUNCHER_ICON" ] && icon="$LAUNCHER_ICON"
+  [ -f "$LAUNCHER_ICON" ] && icon="karvan"
   # Karvan's windows are zenity windows; StartupWMClass makes the dock show them under Karvan
   cat > "$LAUNCHER_DESKTOP" <<EOF
 [Desktop Entry]
@@ -227,7 +238,7 @@ Name=$APP
 Comment=Access files on other computers at home
 Exec=$LAUNCHER_BIN
 Icon=$icon
-StartupWMClass=org.gnome.Zenity
+StartupWMClass=zenity
 Terminal=false
 Categories=Network;FileTransfer;
 EOF
@@ -236,6 +247,7 @@ EOF
 
 uninstall_launcher() {
   rm -f "$LAUNCHER_BIN" "$LAUNCHER_DESKTOP" "$LAUNCHER_ICON"
+  refresh_icon_cache
   echo "Removed $APP from your applications menu."
   echo "System settings made by Setup are left in place; see README.md to remove them."
 }
