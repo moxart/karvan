@@ -64,7 +64,8 @@ Open **Karvan** from the applications menu and choose
 **⚙️ Set up this computer**. Enter your administrator password when asked.
 
 At the end Karvan shows the computer's network name (for example
-`computer-a.local`) and its IP address.
+`computer-a.local`), its IP address and its code. You can see them again any
+time with **ℹ️ This computer's details**.
 
 Once both computers are set up, they can see each other.
 
@@ -75,9 +76,13 @@ Once both computers are set up, they can see each other.
 1. Open Karvan and choose **📂 Open files on another computer**.
 2. Pick the computer from the list. If it is not listed, choose
    **✏️ Enter manually** and type its name or IP address.
-3. Enter your username **on that computer**. It is shown at the end of setup
+3. The first time, Karvan shows a code such as `2732 6445 5ca6 d42f`. On the
+   other computer, open **ℹ️ This computer's details** and check that it
+   shows the same code. If it doesn't, choose **No**: another device may be
+   pretending to be that computer.
+4. Enter your username **on that computer**. It is shown at the end of setup
    on that computer, and it may differ from your username on this one.
-4. Enter that computer's password when Files asks for it.
+5. Enter that computer's password when Files asks for it.
 
 Its home folder opens in Files. You can copy, open and edit the files as if
 they were on your own computer.
@@ -122,9 +127,10 @@ change is invalid, Karvan does not apply it.
 
 Some risks remain:
 
-- **First connection.** The first time you connect to a computer, its host key
-  is accepted without a check (trust on first use). On a home network the risk
-  is low.
+- **First connection.** The first connection is safe only if you compare the
+  codes on both computers. If you skip the check and accept a different code,
+  you may be connecting to another device. Computers you connected to before
+  this check existed are not checked again.
 - **Public networks.** Café and hotel Wi-Fi also use local addresses, so the
   local-network limit gives no protection there. Turn on **Key login only** on
   laptops.

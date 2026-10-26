@@ -17,6 +17,8 @@ SSHD_KEYS_ONLY="/etc/ssh/sshd_config.d/10-karvan-keys-only.conf"
 SSHD_SHARE_ONLY_PREFIX="/etc/ssh/sshd_config.d/10-karvan-share-only-"
 SHARE_ROOT="/srv/karvan"
 SHARE_LINK="$HOME/Karvan"
+HOST_KEY="/etc/ssh/ssh_host_ed25519_key.pub"
+KNOWN_HOSTS="$HOME/.ssh/known_hosts"
 LAN_RANGES=(192.168.0.0/16 10.0.0.0/8 172.16.0.0/12 fe80::/10 fd00::/8)
 LAUNCHER_BIN="$HOME/.local/bin/karvan"
 LAUNCHER_DESKTOP="$HOME/.local/share/applications/karvan.desktop"
@@ -121,6 +123,34 @@ EOF
   fi
 }
 
+# A short code people can compare by eye: the first 64 bits of the SHA-256 of a base64 public key
+key_code() { printf '%s' "$1" | base64 -d | sha256sum | cut -c1-16 | sed 's/..../& /g; s/ $//'; }
+
+this_computer_details() {
+  local code="Run \"⚙️ Set up this computer\" first."
+  [ -r "$HOST_KEY" ] && code="$(key_code "$(awk '{print $2}' "$HOST_KEY")")"
+  printf '%s' "Network name:\n<b>$(hostname).local</b>\n\nUsername:\n<b>$USER</b>\n\nIP:\n<b>$(hostname -I | awk '{print $1}')</b>\n\nCode:\n<b><big>$code</big></b>"
+}
+
+# The first connection to a computer is checked by comparing its code with the one it shows itself,
+# so another device on the network cannot pretend to be it; after that ssh remembers its key
+verify_host() {
+  local host="$1" line
+  ssh-keygen -F "$host" -f "$KNOWN_HOSTS" >/dev/null 2>&1 && return 0
+  line="$(ssh-keyscan -T 5 -t ed25519 "$host" 2>/dev/null | grep -v '^#' | head -n 1)"
+  if [ -z "$line" ]; then
+    error "Could not reach $host.\nHas Setup been run on that computer?"
+    return 1
+  fi
+  if ! ask "First connection to <b>$host</b>.\n\nOn that computer, open Karvan and choose \"ℹ️ This computer's details\". Does it show this code?\n\n<b><big>$(key_code "$(awk '{print $3}' <<<"$line")")</big></b>"; then
+    error "Not connected.\nIf the codes are different, another device may be pretending to be $host."
+    return 1
+  fi
+  mkdir -p "$(dirname "$KNOWN_HOSTS")"
+  chmod 700 "$(dirname "$KNOWN_HOSTS")"
+  echo "$line" >> "$KNOWN_HOSTS"
+}
+
 # ---------- Main actions ----------
 
 setup_this_computer() {
@@ -134,7 +164,7 @@ setup_this_computer() {
     return
   fi
 
-  info "Setup complete ✅\n\nThis computer's network name:\n<b>$(hostname).local</b>\n\nUsername:\n<b>$USER</b>\n\nIP:\n<b>$(hostname -I | awk '{print $1}')</b>\n\nNow do the same on the other computer."
+  info "Setup complete ✅\n\n$(this_computer_details)\n\nNow do the same on the other computer."
 }
 
 # Output: lines of the form  name|hostname|ip
@@ -196,6 +226,7 @@ ask_username() {
 open_remote_files() {
   local host user url
   host="$(pick_computer)" || return
+  verify_host "$host" || return
   user="$(ask_username "$host")" || return
   url="sftp://$user@$host/home/$user"
 
@@ -210,13 +241,14 @@ open_remote_files() {
 setup_passwordless() {
   local host user
   host="$(pick_computer)" || return
+  verify_host "$host" || return
   user="$(ask_username "$host")" || return
 
   [ -f "$HOME/.ssh/id_ed25519" ] || ssh-keygen -q -t ed25519 -N "" -f "$HOME/.ssh/id_ed25519"
 
   # Ask for the password in a dialog instead of a terminal
   if SSH_ASKPASS="$SELF" SSH_ASKPASS_REQUIRE=force KARVAN_ASKPASS=1 \
-      ssh-copy-id -o StrictHostKeyChecking=accept-new "$user@$host" </dev/null >/dev/null 2>&1; then
+      ssh-copy-id -o StrictHostKeyChecking=yes "$user@$host" </dev/null >/dev/null 2>&1; then
     info "Done ✅\nConnecting to <b>$host</b> will no longer ask for a password."
   else
     error "Could not connect to $host.\n\n• Has Setup been run on that computer?\n• Is the username the one used <b>on that computer</b>?\n• Was the password correct?"
@@ -312,13 +344,14 @@ uninstall_launcher() {
 main_menu() {
   local choice
   while true; do
-    choice="$(zenity --list --title="$APP" --width=480 --height=360 \
+    choice="$(zenity --list --title="$APP" --width=480 --height=390 \
       --text="What would you like to do?" --column="id" --column="Action" --hide-column=1 \
       open  "📂  Open files on another computer" \
       setup "⚙️  Set up this computer (once on each machine)" \
       key   "🔑  Passwordless login" \
       lock  "🛡️  Key login only (disable password login)" \
       share "📁  Share only one folder" \
+      about "ℹ️  This computer's details" \
       2>/dev/null)" || exit 0
 
     case "$choice" in
@@ -327,6 +360,7 @@ main_menu() {
       key)   setup_passwordless ;;
       lock)  toggle_password_login ;;
       share) toggle_share_only ;;
+      about) info "$(this_computer_details)" ;;
     esac
   done
 }
