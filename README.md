@@ -8,9 +8,9 @@ Browse the files of another Ubuntu computer on your home network from the
 Files app. You can do it in both directions, with no terminal needed after
 installation.
 
-Karvan is a small desktop tool built on things Ubuntu already has: SSH/SFTP for
-the connection, Avahi (mDNS) to find the other computers, Nautilus to show their
-files, and zenity for the dialogs.
+Karvan is a small GNOME app built on things Ubuntu already has: SSH/SFTP for
+the connection, Avahi (mDNS) to find the other computers, Files (Nautilus) to
+show their files, and GTK 4 with libadwaita for its window.
 
 ## Features
 
@@ -18,23 +18,25 @@ files, and zenity for the dialogs.
   computer discoverable on the local network, and opens the firewall for the
   local network only.
 - **Open files on another computer.** Lists the Karvan computers it finds on
-  your network and opens the one you pick in Files. It can also add that
-  computer to the Files sidebar.
+  your network and opens the one you pick in Files. It remembers your username
+  on each computer and can add it to the Files sidebar.
 - **Passwordless login.** Creates an SSH key if needed and copies it to the
   other computer.
-- **Key login only.** Turns off SSH password login on this computer. The same
-  option turns it back on.
+- **Key login only.** Turns off SSH password login on this computer.
 - **Share only one folder.** Other computers see only the `Karvan` folder in
-  your home folder instead of all your files. The same option turns it off.
+  your home folder instead of all your files.
 - **Checks the other computer on first connection.** Both computers show the
   same short code, so you know you reached the right one.
-- **English and Persian.** Karvan follows the system language. Choose
-  **🌐 Language / زبان** to switch.
+- **English and Persian.** Karvan follows the system language, and the main
+  menu (☰) switches it. In Persian the whole window is laid out right to left.
+- **Follows your system style,** including light and dark mode.
 
 ## Requirements
 
-- Ubuntu 22.04 or newer, desktop edition (GNOME with Files/Nautilus)
-- `zenity`, which comes with Ubuntu Desktop
+- Ubuntu 24.04 or newer, desktop edition (GNOME with Files/Nautilus)
+- GTK 4 and libadwaita 1.5 or newer for Python. Ubuntu Desktop usually has
+  them; if Karvan says they're missing, run
+  `sudo apt install python3-gi gir1.2-gtk-4.0 gir1.2-adw-1`
 - An administrator account on each computer (needed once, for setup)
 - All computers on the same local network
 
@@ -58,18 +60,17 @@ download the ZIP from GitHub (**Code → Download ZIP**) and extract it.
 bash karvan.sh --install
 ```
 
-This copies Karvan to `~/.local/bin/karvan`, installs its icon and adds
-**Karvan** to your applications menu. You can delete the cloned folder
+This copies Karvan to `~/.local/bin/karvan` and `~/.local/share/karvan`,
+installs its icon and adds **Karvan** to your applications menu. You can delete the cloned folder
 afterwards.
 
 ### 3. Set up the computer
 
-Open **Karvan** from the applications menu and choose
-**⚙️ Set up this computer**. Enter your administrator password when asked.
+Open **Karvan** from the applications menu and click **Set up** under
+**This computer**. Enter your administrator password when asked.
 
-At the end Karvan shows the computer's network name (for example
-`computer-a.local`), its IP address and its code. You can see them again any
-time with **ℹ️ This computer's details**.
+Afterwards, **This computer** shows the computer's network name (for example
+`computer-a.local`), your username, its IP address and its code.
 
 Once both computers are set up, they can see each other.
 
@@ -77,16 +78,18 @@ Once both computers are set up, they can see each other.
 
 ### Open files on another computer
 
-1. Open Karvan and choose **📂 Open files on another computer**.
-2. Pick the computer from the list. If it is not listed, choose
-   **✏️ Enter manually** and type its name or IP address.
-3. The first time, Karvan shows a code such as `2732 6445 5ca6 d42f`. On the
-   other computer, open **ℹ️ This computer's details** and check that it
-   shows the same code. If it doesn't, choose **No**: another device may be
+1. Open Karvan. It lists the computers it finds under
+   **Computers on your network**. Click **Open** next to the one you want. If
+   it isn't listed, use **Connect by name or IP**.
+2. The first time, Karvan shows a code such as `2732 6445 5ca6 d42f`. Open
+   Karvan on the other computer and check that **This computer** shows the
+   same code. If it doesn't, choose **Codes differ**: another device may be
    pretending to be that computer.
-4. Enter your username **on that computer**. It is shown at the end of setup
-   on that computer, and it may differ from your username on this one.
-5. Enter that computer's password when Files asks for it.
+3. Enter your username **on that computer**. It is shown under
+   **This computer** there, and it may differ from your username on this one.
+   Karvan remembers it; to change it later, use the ⋮ menu next to the
+   computer.
+4. Enter that computer's password when Files asks for it.
 
 Its home folder opens in Files. You can copy, open and edit the files as if
 they were on your own computer.
@@ -96,21 +99,22 @@ they were on your own computer.
 Password login works, but anyone on your network who can guess the password
 can get in. Keys are safer:
 
-1. On computer **A**, run **🔑 Passwordless login** and pick computer **B**.
-2. On computer **B**, run **🔑 Passwordless login** and pick computer **A**.
+1. On computer **A**, open the ⋮ menu next to computer **B** and choose
+   **Passwordless login**. Enter your password on **B** once.
+2. On computer **B**, do the same for computer **A**.
 3. Check that each computer can now open the other without a password.
-4. On **both** computers, run **🛡️ Key login only**.
+4. On **both** computers, turn on **Key login only** under **Security**.
 
 Do step 4 if one of the computers is a laptop that joins public Wi-Fi.
 
 ### Share only one folder
 
 By default, other computers can open your whole home folder. To share only
-some files, choose **📁 Share only one folder**. After that, other computers
+some files, turn on **Share only one folder** under **Security**. After that, other computers
 see only the `Karvan` folder in your home folder, so put what you want to share
 there.
 
-Set up **🔑 Passwordless login** from the other computers before you turn this
+Set up **Passwordless login** from the other computers before you turn this
 on, because it cannot be set up afterwards. In this mode your account on this
 computer also cannot be used for a terminal (SSH) login from another computer.
 
@@ -174,8 +178,8 @@ sudo systemctl disable --now ssh
 
 **The other computer is not in the list**
 - Make sure setup has been run on that computer.
-- Some routers block mDNS. Choose **✏️ Enter manually** and use the IP address
-  shown at the end of setup.
+- Some routers block mDNS. Use **Connect by name or IP** with the IP address
+  shown under **This computer** on that computer.
 
 **"You don't have permission to access the requested location"**
 You probably entered the wrong username. Use the username of the account on
@@ -184,6 +188,10 @@ the *other* computer, not the one on this computer.
 **The IP address keeps changing**
 In your router settings, reserve a fixed IP for each computer (often called
 *DHCP reservation*). Another option is to use the `name.local` address.
+
+**Karvan doesn't open, or says GTK 4 or libadwaita is missing**
+Install them with `sudo apt install python3-gi gir1.2-gtk-4.0 gir1.2-adw-1`.
+Ubuntu 22.04's libadwaita is too old for Karvan's window.
 
 **Setup failed**
 Setup has to download packages, so check your internet connection. To see the
@@ -194,8 +202,8 @@ pkexec ~/.local/bin/karvan --root-setup
 ```
 
 **Cannot log in after enabling Key login only**
-Sit at that computer, open Karvan, and run **🛡️ Key login only** again to
-turn password login back on.
+Sit at that computer, open Karvan, and turn off **Key login only** to turn
+password login back on.
 
 ## Credits
 
