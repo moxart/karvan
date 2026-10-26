@@ -1,6 +1,4 @@
-<p align="center">
-  <img src="karvan.png" alt="Karvan icon: an engraving of a Bactrian camel's head" width="128">
-</p>
+<img src="karvan.png" alt="Karvan icon: an engraving of a Bactrian camel's head" width="128">
 
 # Karvan
 
