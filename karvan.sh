@@ -16,11 +16,14 @@ SSHD_SHARE_ONLY_PREFIX="/etc/ssh/sshd_config.d/10-karvan-share-only-"
 SHARE_ROOT="/srv/karvan"
 LAN_RANGES=(192.168.0.0/16 10.0.0.0/8 172.16.0.0/12 fe80::/10 fd00::/8)
 LAUNCHER_BIN="$HOME/.local/bin/karvan"
-LAUNCHER_DESKTOP="$HOME/.local/share/applications/karvan.desktop"
 LAUNCHER_ICON_THEME="$HOME/.local/share/icons/hicolor"
 LAUNCHER_ICON="$LAUNCHER_ICON_THEME/256x256/apps/karvan.png"
 LAUNCHER_UI="$HOME/.local/share/karvan/karvan-ui.py"
 APP_ID="io.github.moxart.Karvan"
+# Named after the window's app ID, so GNOME puts the window under this launcher's icon in the dock
+LAUNCHER_DESKTOP="$HOME/.local/share/applications/$APP_ID.desktop"
+# Earlier versions named the launcher karvan.desktop
+OLD_LAUNCHER_DESKTOP="$HOME/.local/share/applications/karvan.desktop"
 UI_CHECK='import gi; gi.require_version("Gtk", "4.0"); gi.require_version("Adw", "1"); from gi.repository import Adw; assert (Adw.get_major_version(), Adw.get_minor_version()) >= (1, 5)'
 
 # Names coming from the network or the user must use safe characters only
@@ -137,6 +140,8 @@ refresh_icon_cache() {
   if [ -f "$LAUNCHER_ICON_THEME/icon-theme.cache" ] && command -v gtk-update-icon-cache >/dev/null; then
     gtk-update-icon-cache --force --ignore-theme-index --quiet "$LAUNCHER_ICON_THEME" || true
   fi
+  # GNOME Shell rescans a theme only when the theme folder itself changes, not its size folders
+  [ ! -d "$LAUNCHER_ICON_THEME" ] || touch "$LAUNCHER_ICON_THEME"
 }
 
 install_launcher() {
@@ -159,7 +164,7 @@ install_launcher() {
   refresh_icon_cache
   local icon="folder-remote"
   [ -f "$LAUNCHER_ICON" ] && icon="karvan"
-  # The window's app ID differs from this file's name; StartupWMClass ties them together for the dock
+  rm -f "$OLD_LAUNCHER_DESKTOP"
   cat > "$LAUNCHER_DESKTOP" <<EOF
 [Desktop Entry]
 Type=Application
@@ -167,7 +172,6 @@ Name=$APP
 Comment=Access files on other computers at home
 Exec=$LAUNCHER_BIN
 Icon=$icon
-StartupWMClass=$APP_ID
 Terminal=false
 Categories=Network;FileTransfer;
 EOF
@@ -177,7 +181,7 @@ EOF
 }
 
 uninstall_launcher() {
-  rm -f "$LAUNCHER_BIN" "$LAUNCHER_DESKTOP" "$LAUNCHER_ICON" "$LAUNCHER_UI"
+  rm -f "$LAUNCHER_BIN" "$LAUNCHER_DESKTOP" "$OLD_LAUNCHER_DESKTOP" "$LAUNCHER_ICON" "$LAUNCHER_UI"
   rmdir "$(dirname "$LAUNCHER_UI")" 2>/dev/null || true
   refresh_icon_cache
   echo "Removed $APP from your applications menu."
