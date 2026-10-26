@@ -33,7 +33,8 @@ show their files, and GTK 4 with libadwaita for its window.
 
 ## Requirements
 
-- Ubuntu 24.04 or newer, desktop edition (GNOME with Files/Nautilus)
+- Ubuntu 24.04 or newer, desktop edition (GNOME with Files/Nautilus). Tested
+  on 24.04 and 26.04; computers on different versions work together.
 - GTK 4 and libadwaita 1.5 or newer for Python. Ubuntu Desktop usually has
   them; if Karvan says they're missing, run
   `sudo apt install python3-gi gir1.2-gtk-4.0 gir1.2-adw-1`

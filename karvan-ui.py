@@ -19,7 +19,7 @@ import gi
 
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
-from gi.repository import Adw, Gdk, Gio, GLib, Gtk  # noqa: E402
+from gi.repository import Adw, Gdk, Gio, GLib, GObject, Gtk  # noqa: E402
 
 APP_ID = "io.github.moxart.Karvan"
 SERVICE_TYPE = "_sftp-ssh._tcp"
@@ -43,7 +43,7 @@ KARVAN_SH = os.environ.get("KARVAN_SH", "")
 # (prevents option injection into ssh and unsafe characters in URLs and bookmarks)
 SAFE_NAME = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9._:-]{0,252}$")
 
-CSS = b"""
+CSS = """
 .code { font-family: monospace; font-size: 1.5em; letter-spacing: 0.06em; }
 .hero-title { margin-top: 6px; }
 """
@@ -319,6 +319,11 @@ class KarvanWindow(Adw.ApplicationWindow):
     def toast(self, text):
         self.toasts.add_toast(Adw.Toast(title=text, timeout=4))
 
+    def copy_text(self, text):
+        provider = Gdk.ContentProvider.new_for_value(GObject.Value(str, text))
+        self.get_clipboard().set_content(provider)
+        self.toast(t("Code copied"))
+
     def show_error(self, heading, body=None):
         dialog = Adw.AlertDialog(heading=heading, body=body or "")
         dialog.add_response("close", t("OK"))
@@ -538,7 +543,7 @@ class KarvanWindow(Adw.ApplicationWindow):
         row = Adw.ActionRow(title=t("Code"), subtitle=code, css_classes=["property"])
         copy = Gtk.Button(icon_name="edit-copy-symbolic", valign=Gtk.Align.CENTER,
                           css_classes=["flat"], tooltip_text=t("Copy"))
-        copy.connect("clicked", lambda _b: (self.get_clipboard().set(code), self.toast(t("Code copied"))))
+        copy.connect("clicked", lambda _b: self.copy_text(code))
         row.add_suffix(copy)
         self.add(self.this_computer, row)
 
@@ -648,8 +653,13 @@ class KarvanApp(Adw.Application):
 
     def on_startup(self):
         Gtk.Window.set_default_icon_name("karvan")
+        # libadwaita 1.5 (Ubuntu 24.04) lays the page out far too narrow when no DPI is set,
+        # as in sessions without GNOME's settings daemon
+        settings = Gtk.Settings.get_default()
+        if settings.props.gtk_xft_dpi <= 0:
+            settings.props.gtk_xft_dpi = 96 * 1024
         css = Gtk.CssProvider()
-        css.load_from_data(CSS, len(CSS))
+        css.load_from_string(CSS)
         Gtk.StyleContext.add_provider_for_display(Gdk.Display.get_default(), css,
                                                   Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
         language = Gio.SimpleAction.new("language", GLib.VariantType.new("s"))

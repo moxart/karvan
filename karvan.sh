@@ -190,9 +190,13 @@ uninstall_launcher() {
 
 # ---------- Entry point ----------
 
-# ssh-copy-id runs this script as SSH_ASKPASS; the window passed the password it asked for
+# ssh-copy-id runs this script as SSH_ASKPASS; the window passed the password it asked for.
+# A yes/no question means ssh doesn't trust the host key: refuse rather than loop on the password.
 if [ "${KARVAN_ASKPASS:-}" = 1 ]; then
-  printf '%s\n' "${KARVAN_ASKPASS_PASSWORD:-}"
+  case "$*" in
+    *yes*) echo no ;;
+    *)     printf '%s\n' "${KARVAN_ASKPASS_PASSWORD:-}" ;;
+  esac
   exit 0
 fi
 
