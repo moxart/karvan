@@ -47,6 +47,21 @@ CSS = """
 .code { font-family: monospace; font-size: 1.5em; letter-spacing: 0.06em; }
 """
 
+# The icon's amber as the accent color: (fill, text on the fill, amber text on the window) per light/dark
+AMBER = {
+    False: ("#e3a23b", "rgba(0, 0, 0, 0.8)", "#8a5a00"),
+    True: ("#e3a23b", "rgba(0, 0, 0, 0.8)", "#f5bd5c"),
+}
+
+
+def accent_css(dark):
+    fill, on_fill, text = AMBER[dark]
+    # libadwaita 1.6 moved its colors to CSS variables; 1.5 (Ubuntu 24.04) still uses named colors
+    if (Adw.get_major_version(), Adw.get_minor_version()) >= (1, 6):
+        return f":root {{ --accent-bg-color: {fill}; --accent-fg-color: {on_fill}; --accent-color: {text}; }}"
+    return (f"@define-color accent_bg_color {fill}; @define-color accent_fg_color {on_fill}; "
+            f"@define-color accent_color {text};")
+
 
 # ---------- Language ----------
 
@@ -654,10 +669,16 @@ class KarvanApp(Adw.Application):
         settings = Gtk.Settings.get_default()
         if settings.props.gtk_xft_dpi <= 0:
             settings.props.gtk_xft_dpi = 96 * 1024
+        display = Gdk.Display.get_default()
         css = Gtk.CssProvider()
         css.load_from_string(CSS)
-        Gtk.StyleContext.add_provider_for_display(Gdk.Display.get_default(), css,
-                                                  Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+        Gtk.StyleContext.add_provider_for_display(display, css, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+
+        accent = Gtk.CssProvider()
+        Gtk.StyleContext.add_provider_for_display(display, accent, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+        styles = Adw.StyleManager.get_default()
+        styles.connect("notify::dark", lambda m, _p: accent.load_from_string(accent_css(m.get_dark())))
+        accent.load_from_string(accent_css(styles.get_dark()))
         language = Gio.SimpleAction.new("language", GLib.VariantType.new("s"))
         language.connect("activate", lambda _a, value: self.set_language(value.get_string()))
         self.add_action(language)
