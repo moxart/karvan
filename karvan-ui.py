@@ -45,7 +45,6 @@ SAFE_NAME = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9._:-]{0,252}$")
 
 CSS = """
 .code { font-family: monospace; font-size: 1.5em; letter-spacing: 0.06em; }
-.hero-title { margin-top: 6px; }
 """
 
 
@@ -244,7 +243,7 @@ def in_background(work, done):
 
 class KarvanWindow(Adw.ApplicationWindow):
     def __init__(self, app):
-        super().__init__(application=app, title="Karvan", default_width=500, default_height=780)
+        super().__init__(application=app, title="Karvan", default_width=500, default_height=660)
         self.computer_rows = []
         self.busy_toggle = False
 
@@ -255,8 +254,7 @@ class KarvanWindow(Adw.ApplicationWindow):
         self.set_content(view)
 
         page = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=24,
-                       margin_top=12, margin_bottom=32, margin_start=16, margin_end=16)
-        page.append(self.build_hero())
+                       margin_top=18, margin_bottom=32, margin_start=16, margin_end=16)
         self.computers = Adw.PreferencesGroup(title=t("Computers on your network"))
         self.spinner = Gtk.Spinner()
         self.computers.set_header_suffix(self.spinner)
@@ -297,23 +295,21 @@ class KarvanWindow(Adw.ApplicationWindow):
         menu.append_section(None, more)
         header.pack_end(Gtk.MenuButton(icon_name="open-menu-symbolic", menu_model=menu,
                                        tooltip_text=t("Main menu")))
+        header.set_title_widget(self.build_title())
         return header
 
-    def build_hero(self):
-        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+    def build_title(self):
+        """The app's icon beside its name, in place of the plain window title."""
         theme = Gtk.IconTheme.get_for_display(Gdk.Display.get_default())
         local_icon = Path(KARVAN_SH).parent / "karvan.png"
         if not theme.has_icon("karvan") and local_icon.exists():
             icon = Gtk.Image.new_from_file(str(local_icon))
         else:
             icon = Gtk.Image.new_from_icon_name("karvan")
-        icon.set_pixel_size(112)
+        icon.set_pixel_size(22)
+        box = Gtk.Box(spacing=8)
         box.append(icon)
-        title = Gtk.Label(label=t("Files on your home computers"), wrap=True,
-                          justify=Gtk.Justification.CENTER, css_classes=["title-1", "hero-title"])
-        box.append(title)
-        box.append(Gtk.Label(label=t("Open another computer's files right in Files."), wrap=True,
-                             justify=Gtk.Justification.CENTER, css_classes=["dim-label"]))
+        box.append(Gtk.Label(label="Karvan", css_classes=["title"]))
         return box
 
     def toast(self, text):
@@ -736,8 +732,6 @@ FA = {
     "Run setup again": "راه‌اندازی دوباره",
     "About Karvan": "درباره‌ی Karvan",
     "Main menu": "منوی اصلی",
-    "Files on your home computers": "فایل‌های کامپیوترهای خانه",
-    "Open another computer's files right in Files.": "فایل‌های کامپیوتر دیگر را مستقیم در Files باز کنید.",
     "Searching…": "در حال جست‌وجو…",
     "No computers found": "کامپیوتری پیدا نشد",
     "Check that the other computer is on, on the same network, and set up.":
