@@ -24,6 +24,8 @@ files, and zenity for the dialogs.
   other computer.
 - **Key login only.** Turns off SSH password login on this computer. The same
   option turns it back on.
+- **Share only one folder.** Other computers see only the `Karvan` folder in
+  your home folder instead of all your files. The same option turns it off.
 
 ## Requirements
 
@@ -92,6 +94,17 @@ can get in. Keys are safer:
 
 Do step 4 if one of the computers is a laptop that joins public Wi-Fi.
 
+### Share only one folder
+
+By default, other computers can open your whole home folder. To share only
+some files, choose **📁 Share only one folder**. After that, other computers
+see only the `Karvan` folder in your home folder, so put what you want to share
+there.
+
+Set up **🔑 Passwordless login** from the other computers before you turn this
+on, because it cannot be set up afterwards. In this mode your account on this
+computer also cannot be used for a terminal (SSH) login from another computer.
+
 ## Security
 
 Setup changes these system settings:
@@ -100,6 +113,7 @@ Setup changes these system settings:
 | --- | --- |
 | Allows SSH logins only from local network addresses (`192.168.0.0/16`, `10.0.0.0/8`, `172.16.0.0/12`, IPv6 link-local and ULA) | `/etc/ssh/sshd_config.d/10-karvan-lan-only.conf` |
 | Disables password login (only with **Key login only**) | `/etc/ssh/sshd_config.d/10-karvan-keys-only.conf` |
+| Limits your SSH logins to file access in the shared folder (only with **Share only one folder**) | `/etc/ssh/sshd_config.d/10-karvan-share-only-<user>.conf`, shared folder in `/srv/karvan/home/<user>` |
 | Advertises the computer on the local network | `/etc/avahi/services/karvan.service` |
 | Opens port 22 for the ranges above (only if `ufw` is active) | `ufw` rules |
 
@@ -135,6 +149,10 @@ sudo rm -f /etc/ssh/sshd_config.d/10-karvan-*.conf /etc/avahi/services/karvan.se
 ```bash
 sudo systemctl restart ssh avahi-daemon
 ```
+
+If you used **Share only one folder**, your shared files are still in
+`/srv/karvan/home/<your username>`. Move them somewhere else before deleting
+`/srv/karvan`.
 
 If you want to keep the SSH server but turn off SSH completely, run:
 

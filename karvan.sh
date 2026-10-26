@@ -14,6 +14,9 @@ BOOKMARKS="$HOME/.config/gtk-3.0/bookmarks"
 SELF="$(realpath "${BASH_SOURCE[0]}")"
 SSHD_LAN_ONLY="/etc/ssh/sshd_config.d/10-karvan-lan-only.conf"
 SSHD_KEYS_ONLY="/etc/ssh/sshd_config.d/10-karvan-keys-only.conf"
+SSHD_SHARE_ONLY_PREFIX="/etc/ssh/sshd_config.d/10-karvan-share-only-"
+SHARE_ROOT="/srv/karvan"
+SHARE_LINK="$HOME/Karvan"
 LAN_RANGES=(192.168.0.0/16 10.0.0.0/8 172.16.0.0/12 fe80::/10 fd00::/8)
 LAUNCHER_BIN="$HOME/.local/bin/karvan"
 LAUNCHER_DESKTOP="$HOME/.local/share/applications/karvan.desktop"
@@ -85,6 +88,35 @@ root_set_password_login() {
     apply_sshd_config "$SSHD_KEYS_ONLY"
   else
     rm -f "$SSHD_KEYS_ONLY"
+    systemctl restart ssh
+  fi
+}
+
+# Limits SSH logins of the user who ran pkexec to SFTP inside $SHARE_ROOT, where only
+# home/<user> is theirs, so the usual sftp://user@host/home/user address still works
+root_set_share_only() {
+  set -e
+  local user group conf
+  user="$(id -nu "${PKEXEC_UID:?}")"
+  is_safe_name "$user"
+  conf="$SSHD_SHARE_ONLY_PREFIX$user.conf"
+  if [ "$1" = on ]; then
+    group="$(id -gn "$user")"
+    # sshd requires every directory on the chroot path to be owned by root and writable only by root
+    install -d -o root -g root -m 755 "$SHARE_ROOT" "$SHARE_ROOT/home"
+    install -d -o "$user" -g "$group" -m 700 "$SHARE_ROOT/home/$user"
+    cat > "$conf" <<EOF
+Match User $user
+    ChrootDirectory $SHARE_ROOT
+    ForceCommand internal-sftp
+    AllowTcpForwarding no
+    X11Forwarding no
+    PermitTTY no
+Match all
+EOF
+    apply_sshd_config "$conf"
+  else
+    rm -f "$conf"
     systemctl restart ssh
   fi
 }
@@ -207,6 +239,31 @@ toggle_password_login() {
   fi
 }
 
+toggle_share_only() {
+  local mode shared="$SHARE_ROOT/home/$USER"
+  if [ -f "$SSHD_SHARE_ONLY_PREFIX$USER.conf" ]; then
+    ask "Other computers can currently see only your shared folder.\nShare your whole home folder again?" || return
+    mode=off
+  else
+    ask "After this, other computers see only one shared folder instead of your whole home folder. Put the files you want to share there.\n\n⚠️ First, run \"🔑 Passwordless login\" for this computer on each other computer. It cannot be set up afterwards.\n\nContinue?" || return
+    mode=on
+  fi
+  if ! pkexec "$SELF" --root-share-only "$mode" >/dev/null 2>&1; then
+    error "Failed to change the settings."
+    return
+  fi
+  if [ "$mode" = off ]; then
+    info "Done ✅\nOther computers can see your whole home folder again.\nFiles in $shared stay where they are."
+    return
+  fi
+  [ -e "$SHARE_LINK" ] || ln -s "$shared" "$SHARE_LINK"
+  if [ "$(readlink "$SHARE_LINK")" = "$shared" ]; then
+    info "Done ✅\nThe shared folder is <b>Karvan</b> in your home folder."
+  else
+    info "Done ✅\nThe shared folder is <b>$shared</b>."
+  fi
+}
+
 # An existing icon cache hides icons it doesn't list, so rebuild it; with no cache, icons are found directly
 refresh_icon_cache() {
   if [ -f "$LAUNCHER_ICON_THEME/icon-theme.cache" ] && command -v gtk-update-icon-cache >/dev/null; then
@@ -255,12 +312,13 @@ uninstall_launcher() {
 main_menu() {
   local choice
   while true; do
-    choice="$(zenity --list --title="$APP" --width=480 --height=330 \
+    choice="$(zenity --list --title="$APP" --width=480 --height=360 \
       --text="What would you like to do?" --column="id" --column="Action" --hide-column=1 \
       open  "📂  Open files on another computer" \
       setup "⚙️  Set up this computer (once on each machine)" \
       key   "🔑  Passwordless login" \
       lock  "🛡️  Key login only (disable password login)" \
+      share "📁  Share only one folder" \
       2>/dev/null)" || exit 0
 
     case "$choice" in
@@ -268,6 +326,7 @@ main_menu() {
       setup) setup_this_computer ;;
       key)   setup_passwordless ;;
       lock)  toggle_password_login ;;
+      share) toggle_share_only ;;
     esac
   done
 }
@@ -284,6 +343,10 @@ case "${1:-}" in
   --root-password-login)
     [[ "${2:-}" = on || "${2:-}" = off ]] || exit 2
     root_set_password_login "$2"
+    ;;
+  --root-share-only)
+    [[ "${2:-}" = on || "${2:-}" = off ]] || exit 2
+    root_set_share_only "$2"
     ;;
   --install)    install_launcher ;;
   --uninstall)  uninstall_launcher ;;
