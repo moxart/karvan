@@ -140,14 +140,32 @@ def is_set_up():
 
 
 def is_known_host(host):
-    return run(["ssh-keygen", "-F", host, "-f", str(KNOWN_HOSTS)]).returncode == 0
+    # ssh looks host names up in lowercase, and saves them that way
+    return run(["ssh-keygen", "-F", host.lower(), "-f", str(KNOWN_HOSTS)]).returncode == 0
+
+
+def resolve(host):
+    """Returns the host's address, preferring IPv4, or None if the name can't be found."""
+    for family in (socket.AF_INET, socket.AF_UNSPEC):
+        try:
+            return socket.getaddrinfo(host, 22, family, socket.SOCK_STREAM)[0][4][0]
+        except (socket.gaierror, IndexError):
+            continue
+    return None
 
 
 def scan_host_key(host):
     """Returns the known_hosts line for the host's ed25519 key, or None if it can't be reached."""
-    out = run(["ssh-keyscan", "-T", "5", "-t", "ed25519", host]).stdout
-    lines = [line for line in out.splitlines() if line and not line.startswith("#")]
-    return lines[0] if lines else None
+    # Ubuntu's AppArmor profile for ssh-keyscan blocks Avahi, so it can't look up .local names itself
+    address = resolve(host)
+    if not address:
+        return None
+    out = run(["ssh-keyscan", "-T", "5", "-t", "ed25519", address]).stdout
+    for line in out.splitlines():
+        fields = line.split()
+        if len(fields) >= 3 and not line.startswith("#"):
+            return f"{host.lower()} {fields[1]} {fields[2]}"
+    return None
 
 
 def remember_host_key(line):
@@ -301,6 +319,11 @@ class KarvanWindow(Adw.ApplicationWindow):
     def toast(self, text):
         self.toasts.add_toast(Adw.Toast(title=text, timeout=4))
 
+    def show_error(self, heading, body=None):
+        dialog = Adw.AlertDialog(heading=heading, body=body or "")
+        dialog.add_response("close", t("OK"))
+        dialog.present(self)
+
     # ----- Computers on the network -----
 
     def search(self):
@@ -366,7 +389,8 @@ class KarvanWindow(Adw.ApplicationWindow):
                 return
             host = entry.get_text().strip()
             if not SAFE_NAME.match(host):
-                self.toast(t("That address isn't valid."))
+                self.show_error(t("That address isn't valid"),
+                                t("Use a name such as laptop.local or an IP address such as 192.168.1.20."))
                 return
             self.on_open(host)
         dialog.connect("response", lambda _d, r: answered(r == "ok"))
@@ -383,7 +407,8 @@ class KarvanWindow(Adw.ApplicationWindow):
             if line is None:
                 next_step()
             elif line == "":
-                self.toast(t("Couldn't reach %s. Has it been set up?", host))
+                self.show_error(t("Couldn't reach %s", host),
+                                t("Check that the other computer is on, on the same network, and set up."))
             else:
                 self.confirm_code(host, line, next_step)
         in_background(check, checked)
@@ -406,7 +431,8 @@ class KarvanWindow(Adw.ApplicationWindow):
                 remember_host_key(line)
                 next_step()
             else:
-                self.toast(t("Not connected. Another device may be pretending to be %s.", host))
+                self.show_error(t("Not connected"),
+                                t("If the codes are different, another device may be pretending to be %s.", host))
         dialog.connect("response", answered)
         dialog.present(self)
 
@@ -429,7 +455,8 @@ class KarvanWindow(Adw.ApplicationWindow):
                 return
             user = entry.get_text().strip()
             if not SAFE_NAME.match(user):
-                self.toast(t("That username isn't valid."))
+                self.show_error(t("That username isn't valid"),
+                                t("Use the username shown under “This computer” on %s.", host))
                 return
             save_username(host, user)
             next_step(user, offer_bookmark and sidebar.get_active())
@@ -463,8 +490,11 @@ class KarvanWindow(Adw.ApplicationWindow):
             dialog.present(self)
 
         def done(ok):
-            self.toast(t("Connecting to %s won't ask for a password anymore.", host) if ok else
-                       t("Couldn't set it up. Check the username and password."))
+            if ok:
+                self.toast(t("Connecting to %s won't ask for a password anymore.", host))
+            else:
+                self.show_error(t("Passwordless login wasn't set up"),
+                                t("Check the username and password, and that %s is set up.", host))
         self.verify_then(host, lambda: self.with_username(host, ask_password))
 
     def on_forget_username(self, host):
@@ -544,7 +574,8 @@ class KarvanWindow(Adw.ApplicationWindow):
                 self.toast(done_text)
             else:
                 put_back()
-                self.toast(t("Couldn't change the setting."))
+                self.show_error(t("Couldn't change the setting"),
+                                t("Nothing was changed. Try again, and enter the administrator password when asked."))
 
         def answered(_d, response):
             if response != "ok":
@@ -658,8 +689,11 @@ class KarvanApp(Adw.Application):
 
         def finished(ok):
             window.refresh_this_computer()
-            window.toast(t("This computer is set up. Now set up the other one.") if ok else
-                         t("Setup didn't finish. Check your internet connection and try again."))
+            if ok:
+                window.toast(t("This computer is set up. Now set up the other one."))
+            else:
+                window.show_error(t("Setup didn't finish"),
+                                  t("Check your internet connection and try again."))
 
         def answered(_d, response):
             if response == "ok":
@@ -706,22 +740,17 @@ FA = {
     "Name or IP": "نام یا IP",
     "For example, laptop.local or 192.168.1.20": "مثلاً laptop.local یا 192.168.1.20",
     "Connect": "اتصال",
-    "That address isn't valid.": "این نشانی معتبر نیست.",
-    "Couldn't reach %s. Has it been set up?": "به %s دسترسی نیست. آیا راه‌اندازی شده است؟",
     "Is this the right computer?": "کامپیوتر درست است؟",
     "On %s, open Karvan and look at the code under “This computer”. It should be the same as this one.":
         "Karvan را روی %s باز کنید و کد زیر «این کامپیوتر» را ببینید. باید با این کد یکی باشد.",
     "Codes differ": "کدها فرق دارند",
     "Codes match": "کدها یکی‌اند",
-    "Not connected. Another device may be pretending to be %s.":
-        "وصل نشد. ممکن است دستگاه دیگری خود را به‌جای %s جا زده باشد.",
     "Your username on %s": "نام کاربری شما روی %s",
     "It may be different from your username on this computer.":
         "ممکن است با نام کاربری‌تان روی این کامپیوتر فرق داشته باشد.",
     "Show in the Files sidebar": "نمایش در نوار کناری Files",
     "Who are you on %s?": "روی %s با چه نامی وارد می‌شوید؟",
     "Continue": "ادامه",
-    "That username isn't valid.": "این نام کاربری معتبر نیست.",
     "Opening %s in Files…": "در حال باز کردن %s در Files…",
     "Password for %s on %s": "رمز %s روی %s",
     "Enter your password on %s once. After that, connecting won't ask for it.":
@@ -729,8 +758,6 @@ FA = {
     "Set up": "راه‌اندازی",
     "Setting up passwordless login…": "در حال راه‌اندازی ورود بدون رمز…",
     "Connecting to %s won't ask for a password anymore.": "اتصال به %s دیگر رمز نمی‌خواهد.",
-    "Couldn't set it up. Check the username and password.":
-        "راه‌اندازی نشد. نام کاربری و رمز را بررسی کنید.",
     "Karvan will ask for your username on %s next time.":
         "دفعه‌ی بعد Karvan نام کاربری‌تان روی %s را می‌پرسد.",
     "Set up this computer": "راه‌اندازی این کامپیوتر",
@@ -747,7 +774,6 @@ FA = {
     "Share only one folder": "اشتراک فقط یک پوشه",
     "Other computers see only the Karvan folder in your home folder":
         "کامپیوترهای دیگر فقط پوشه‌ی Karvan در پوشه‌ی خانه را می‌بینند",
-    "Couldn't change the setting.": "تنظیم تغییر نکرد.",
     "Turn on key login only?": "فقط ورود با کلید روشن شود؟",
     "Other computers can then connect to this one only with passwordless login.\n\n"
     "First, on each other computer, set up “Passwordless login” for this computer and check that it works.":
@@ -769,6 +795,25 @@ FA = {
     "The files in the Karvan folder stay where they are.": "فایل‌های پوشه‌ی Karvan سر جایشان می‌مانند.",
     "Your whole home folder is shared again": "کل پوشه‌ی خانه دوباره به اشتراک گذاشته شد",
     "Cancel": "انصراف",
+    "OK": "باشه",
+    "That address isn't valid": "این نشانی معتبر نیست",
+    "Use a name such as laptop.local or an IP address such as 192.168.1.20.":
+        "نامی مثل laptop.local یا نشانی IP مثل 192.168.1.20 وارد کنید.",
+    "Couldn't reach %s": "به %s دسترسی نیست",
+    "Not connected": "وصل نشد",
+    "If the codes are different, another device may be pretending to be %s.":
+        "اگر کدها فرق دارند، ممکن است دستگاه دیگری خود را به‌جای %s جا زده باشد.",
+    "That username isn't valid": "این نام کاربری معتبر نیست",
+    "Use the username shown under “This computer” on %s.":
+        "نام کاربری‌ای را وارد کنید که روی %s زیر «این کامپیوتر» نوشته شده است.",
+    "Passwordless login wasn't set up": "ورود بدون رمز راه‌اندازی نشد",
+    "Check the username and password, and that %s is set up.":
+        "نام کاربری و رمز را بررسی کنید، و این‌که %s راه‌اندازی شده باشد.",
+    "Couldn't change the setting": "تنظیم تغییر نکرد",
+    "Nothing was changed. Try again, and enter the administrator password when asked.":
+        "چیزی تغییر نکرد. دوباره امتحان کنید و وقتی رمز مدیر سیستم خواسته شد، آن را وارد کنید.",
+    "Setup didn't finish": "راه‌اندازی تمام نشد",
+    "Check your internet connection and try again.": "اتصال اینترنت را بررسی کنید و دوباره امتحان کنید.",
     "Set up this computer?": "این کامپیوتر راه‌اندازی شود؟",
     "Karvan will install and turn on the SSH server, make this computer visible on your home network, "
     "and allow connections from your home network only.\n\nYou'll be asked for the administrator password.":
@@ -776,8 +821,6 @@ FA = {
         "و فقط اتصال از شبکه‌ی خانه را اجازه می‌دهد.\n\nرمز مدیر سیستم از شما پرسیده می‌شود.",
     "This computer is set up. Now set up the other one.":
         "این کامپیوتر راه‌اندازی شد. حالا کامپیوتر دیگر را راه‌اندازی کنید.",
-    "Setup didn't finish. Check your internet connection and try again.":
-        "راه‌اندازی تمام نشد. اتصال اینترنت را بررسی کنید و دوباره امتحان کنید.",
     "Setting up… this can take a few minutes.": "در حال راه‌اندازی… ممکن است چند دقیقه طول بکشد.",
     "Browse the files of your other Ubuntu computers at home, right in Files.":
         "فایل‌های کامپیوترهای اوبونتوی دیگر خانه را مستقیم در Files ببینید.",
