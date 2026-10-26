@@ -26,6 +26,10 @@ files, and zenity for the dialogs.
   option turns it back on.
 - **Share only one folder.** Other computers see only the `Karvan` folder in
   your home folder instead of all your files. The same option turns it off.
+- **Checks the other computer on first connection.** Both computers show the
+  same short code, so you know you reached the right one.
+- **English and Persian.** Karvan follows the system language. Choose
+  **🌐 Language / زبان** to switch.
 
 ## Requirements
 
