@@ -10,6 +10,11 @@ Karvan is a small GNOME app built on things Ubuntu already has: SSH/SFTP for
 the connection, Avahi (mDNS) to find the other computers, Files (Nautilus) to
 show their files, and GTK 4 with libadwaita for its window.
 
+<p>
+  <img src="docs/screenshot-en.png" alt="Karvan's window in English and light mode: two computers on the network with Open buttons, this computer's name, username, IP and code, and the security switches" width="360">
+  <img src="docs/screenshot-fa.png" alt="Karvan's window in Persian and dark mode, laid out right to left" width="360">
+</p>
+
 ## Features
 
 - **Set up this computer.** Installs and enables the SSH server, makes the
