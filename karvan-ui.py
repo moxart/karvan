@@ -12,6 +12,7 @@ import os
 import re
 import socket
 import subprocess
+import sys
 import threading
 from pathlib import Path
 
@@ -37,6 +38,7 @@ BOOKMARKS = HOME / ".config/gtk-3.0/bookmarks"
 CONFIG_DIR = HOME / ".config/karvan"
 LANGUAGE_FILE = CONFIG_DIR / "language"
 USERNAMES_FILE = CONFIG_DIR / "usernames"
+NAUTILUS_SCRIPTS = HOME / ".local/share/nautilus/scripts"
 KARVAN_SH = os.environ.get("KARVAN_SH", "")
 
 # Names coming from the network or the user must use safe characters only
@@ -254,9 +256,189 @@ def in_background(work, done):
     threading.Thread(target=worker, daemon=True).start()
 
 
+# ---------- Sending files ----------
+
+# Marks the Files script as Karvan's, so it can be renamed or removed later
+SEND_SCRIPT_MARK = "# Added by Karvan"
+
+
+def install_send_script():
+    """Adds "Send to another computer" to the Scripts menu when right-clicking files in Files."""
+    if not KARVAN_SH:
+        return
+    name = t("Send to another computer (Karvan)")
+    try:
+        NAUTILUS_SCRIPTS.mkdir(parents=True, exist_ok=True)
+        for old in NAUTILUS_SCRIPTS.iterdir():
+            if old.name != name and old.is_file() and SEND_SCRIPT_MARK in old.read_text(errors="ignore"):
+                old.unlink()
+        script = NAUTILUS_SCRIPTS / name
+        script.write_text(f'#!/bin/sh\n{SEND_SCRIPT_MARK}: right-click files, then Scripts\n'
+                          f'exec "{KARVAN_SH}" --send "$@"\n')
+        script.chmod(0o755)
+    except OSError:
+        pass
+
+
+def size_of(path):
+    if os.path.isdir(path) and not os.path.islink(path):
+        return sum(size_of(os.path.join(path, name)) for name in os.listdir(path))
+    try:
+        return os.path.getsize(path)
+    except OSError:
+        return 0
+
+
+def free_name(folder, name):
+    """A child of folder called name, or "name (2)", "name (3)"… if that already exists."""
+    child = folder.get_child(name)
+    stem, dot, ext = name.partition(".") if not name.startswith(".") else (name, "", "")
+    number = 2
+    while child.query_exists(None):
+        child = folder.get_child(f"{stem} ({number}){dot}{ext}")
+        number += 1
+    return child
+
+
+def send_files(paths, home, report):
+    """Copies files and folders into Downloads on the other computer (or its home folder if it
+    has none), never replacing anything there. report(copied_bytes, total_bytes) runs on this
+    thread as it goes. Returns the folder they went to."""
+    target = home.get_child("Downloads")
+    if not target.query_exists(None):
+        target = home
+    total = max(sum(size_of(p) for p in paths), 1)
+    copied = 0
+
+    def copy(path, dest):
+        nonlocal copied
+        if os.path.isdir(path) and not os.path.islink(path):
+            dest.make_directory(None)
+            for name in sorted(os.listdir(path)):
+                copy(os.path.join(path, name), dest.get_child(name))
+            return
+        start = copied
+        Gio.File.new_for_path(path).copy(dest, Gio.FileCopyFlags.NONE, None,
+                                         lambda done, _total: report(start + done, total))
+        copied = start + size_of(path)
+        report(copied, total)
+
+    for path in paths:
+        copy(path, free_name(target, os.path.basename(path.rstrip("/"))))
+    return target
+
+
 # ---------- Window ----------
 
-class KarvanWindow(Adw.ApplicationWindow):
+class ConnectionFlow:
+    """What the main window and the send window share: the title, messages, and the steps
+    for reaching a computer (checking its code, asking for the username)."""
+
+    def build_title(self):
+        """The app's icon beside its name, in place of the plain window title."""
+        theme = Gtk.IconTheme.get_for_display(Gdk.Display.get_default())
+        local_icon = Path(KARVAN_SH).parent / "karvan.png"
+        if not theme.has_icon("karvan") and local_icon.exists():
+            icon = Gtk.Image.new_from_file(str(local_icon))
+        else:
+            icon = Gtk.Image.new_from_icon_name("karvan")
+        icon.set_pixel_size(22)
+        box = Gtk.Box(spacing=8)
+        box.append(icon)
+        box.append(Gtk.Label(label="Karvan", css_classes=["title"]))
+        return box
+
+    def toast(self, text):
+        self.toasts.add_toast(Adw.Toast(title=text, timeout=4))
+
+    def show_error(self, heading, body=None):
+        dialog = Adw.AlertDialog(heading=heading, body=body or "")
+        dialog.add_response("close", t("OK"))
+        dialog.present(self)
+
+    def verify_then(self, host, next_step):
+        """The first connection is checked by comparing codes, so another device can't pretend to be it."""
+        def check():
+            return None if is_known_host(host) else (scan_host_key(host) or "")
+
+        def checked(line):
+            if line is None:
+                next_step()
+            elif line == "":
+                self.show_error(t("Couldn't reach %s", host),
+                                t("Check that the other computer is on, on the same network, and set up."))
+            else:
+                self.confirm_code(host, line, next_step)
+        in_background(check, checked)
+
+    def confirm_code(self, host, line, next_step):
+        code = Gtk.Label(label=key_code(line.split()[2]), selectable=True, css_classes=["code"],
+                         margin_top=6)
+        dialog = Adw.AlertDialog(
+            heading=t("Is this the right computer?"),
+            body=t("On %s, open Karvan and look at the code under “This computer”. "
+                   "It should be the same as this one.", host),
+            extra_child=code)
+        dialog.add_response("different", t("Codes differ"))
+        dialog.add_response("same", t("Codes match"))
+        dialog.set_response_appearance("same", Adw.ResponseAppearance.SUGGESTED)
+        dialog.set_close_response("different")
+
+        def answered(_d, response):
+            if response == "same":
+                remember_host_key(line)
+                next_step()
+            else:
+                self.show_error(t("Not connected"),
+                                t("If the codes are different, another device may be pretending to be %s.", host))
+        dialog.connect("response", answered)
+        dialog.present(self)
+
+    def with_username(self, host, next_step, offer_bookmark=False):
+        user = saved_usernames().get(host)
+        if user:
+            next_step(user, False)
+            return
+        entry = Adw.EntryRow(title=t("Your username on %s", host), text=USER, activates_default=True)
+        group = Adw.PreferencesGroup(
+            description=t("It may be different from your username on this computer."))
+        group.add(entry)
+        sidebar = Adw.SwitchRow(title=t("Show in the Files sidebar"), active=True)
+        if offer_bookmark:
+            group.add(sidebar)
+        dialog = self.dialog(t("Who are you on %s?", host), None, extra=group, ok=t("Continue"))
+
+        def answered(_d, response):
+            if response != "ok":
+                return
+            user = entry.get_text().strip()
+            if not SAFE_NAME.match(user):
+                self.show_error(t("That username isn't valid"),
+                                t("Use the username shown under “This computer” on %s.", host))
+                return
+            save_username(host, user)
+            next_step(user, offer_bookmark and sidebar.get_active())
+        dialog.connect("response", answered)
+        dialog.present(self)
+
+    def boxed(self, row):
+        group = Adw.PreferencesGroup()
+        group.add(row)
+        return group
+
+    def dialog(self, heading, body, extra=None, ok=None):
+        dialog = Adw.AlertDialog(heading=heading, body=body or "")
+        if extra:
+            dialog.set_extra_child(extra)
+        dialog.add_response("cancel", t("Cancel"))
+        dialog.add_response("ok", ok or t("Continue"))
+        dialog.set_response_appearance("ok", Adw.ResponseAppearance.SUGGESTED)
+        dialog.set_default_response("ok")
+        dialog.set_close_response("cancel")
+        return dialog
+
+
+class KarvanWindow(ConnectionFlow, Adw.ApplicationWindow):
     def __init__(self, app):
         super().__init__(application=app, title="Karvan", default_width=500, default_height=660)
         self.computer_rows = []
@@ -313,32 +495,10 @@ class KarvanWindow(Adw.ApplicationWindow):
         header.set_title_widget(self.build_title())
         return header
 
-    def build_title(self):
-        """The app's icon beside its name, in place of the plain window title."""
-        theme = Gtk.IconTheme.get_for_display(Gdk.Display.get_default())
-        local_icon = Path(KARVAN_SH).parent / "karvan.png"
-        if not theme.has_icon("karvan") and local_icon.exists():
-            icon = Gtk.Image.new_from_file(str(local_icon))
-        else:
-            icon = Gtk.Image.new_from_icon_name("karvan")
-        icon.set_pixel_size(22)
-        box = Gtk.Box(spacing=8)
-        box.append(icon)
-        box.append(Gtk.Label(label="Karvan", css_classes=["title"]))
-        return box
-
-    def toast(self, text):
-        self.toasts.add_toast(Adw.Toast(title=text, timeout=4))
-
     def copy_text(self, text):
         provider = Gdk.ContentProvider.new_for_value(GObject.Value(str, text))
         self.get_clipboard().set_content(provider)
         self.toast(t("Code copied"))
-
-    def show_error(self, heading, body=None):
-        dialog = Adw.AlertDialog(heading=heading, body=body or "")
-        dialog.add_response("close", t("OK"))
-        dialog.present(self)
 
     # ----- Computers on the network -----
 
@@ -413,71 +573,6 @@ class KarvanWindow(Adw.ApplicationWindow):
         dialog.present(self)
 
     # ----- Connecting -----
-
-    def verify_then(self, host, next_step):
-        """The first connection is checked by comparing codes, so another device can't pretend to be it."""
-        def check():
-            return None if is_known_host(host) else (scan_host_key(host) or "")
-
-        def checked(line):
-            if line is None:
-                next_step()
-            elif line == "":
-                self.show_error(t("Couldn't reach %s", host),
-                                t("Check that the other computer is on, on the same network, and set up."))
-            else:
-                self.confirm_code(host, line, next_step)
-        in_background(check, checked)
-
-    def confirm_code(self, host, line, next_step):
-        code = Gtk.Label(label=key_code(line.split()[2]), selectable=True, css_classes=["code"],
-                         margin_top=6)
-        dialog = Adw.AlertDialog(
-            heading=t("Is this the right computer?"),
-            body=t("On %s, open Karvan and look at the code under “This computer”. "
-                   "It should be the same as this one.", host),
-            extra_child=code)
-        dialog.add_response("different", t("Codes differ"))
-        dialog.add_response("same", t("Codes match"))
-        dialog.set_response_appearance("same", Adw.ResponseAppearance.SUGGESTED)
-        dialog.set_close_response("different")
-
-        def answered(_d, response):
-            if response == "same":
-                remember_host_key(line)
-                next_step()
-            else:
-                self.show_error(t("Not connected"),
-                                t("If the codes are different, another device may be pretending to be %s.", host))
-        dialog.connect("response", answered)
-        dialog.present(self)
-
-    def with_username(self, host, next_step, offer_bookmark=False):
-        user = saved_usernames().get(host)
-        if user:
-            next_step(user, False)
-            return
-        entry = Adw.EntryRow(title=t("Your username on %s", host), text=USER, activates_default=True)
-        group = Adw.PreferencesGroup(
-            description=t("It may be different from your username on this computer."))
-        group.add(entry)
-        sidebar = Adw.SwitchRow(title=t("Show in the Files sidebar"), active=True)
-        if offer_bookmark:
-            group.add(sidebar)
-        dialog = self.dialog(t("Who are you on %s?", host), None, extra=group, ok=t("Continue"))
-
-        def answered(_d, response):
-            if response != "ok":
-                return
-            user = entry.get_text().strip()
-            if not SAFE_NAME.match(user):
-                self.show_error(t("That username isn't valid"),
-                                t("Use the username shown under “This computer” on %s.", host))
-                return
-            save_username(host, user)
-            next_step(user, offer_bookmark and sidebar.get_active())
-        dialog.connect("response", answered)
-        dialog.present(self)
 
     def on_open(self, host):
         def open_files(user, bookmark):
@@ -634,26 +729,206 @@ class KarvanWindow(Adw.ApplicationWindow):
                 t("The files in the Karvan folder stay where they are."),
                 ("--root-share-only", "off"), t("Your whole home folder is shared again"))
 
-    # ----- Dialog helpers -----
 
-    def boxed(self, row):
-        group = Adw.PreferencesGroup()
-        group.add(row)
-        return group
+class SendWindow(ConnectionFlow, Adw.ApplicationWindow):
+    """Sends the files picked in Files to another computer. Started from the Files Scripts menu."""
 
-    def dialog(self, heading, body, extra=None, ok=None):
-        dialog = Adw.AlertDialog(heading=heading, body=body or "")
-        if extra:
-            dialog.set_extra_child(extra)
-        dialog.add_response("cancel", t("Cancel"))
-        dialog.add_response("ok", ok or t("Continue"))
-        dialog.set_response_appearance("ok", Adw.ResponseAppearance.SUGGESTED)
-        dialog.set_default_response("ok")
-        dialog.set_close_response("cancel")
-        return dialog
+    def __init__(self, app, paths):
+        super().__init__(application=app, title=t("Send with Karvan"), default_width=460, default_height=520)
+        self.paths = paths
+        self.rows = []
+
+        self.toasts = Adw.ToastOverlay()
+        view = Adw.ToolbarView()
+        header = Adw.HeaderBar()
+        header.set_title_widget(self.build_title())
+        view.add_top_bar(header)
+        view.set_content(self.toasts)
+        self.set_content(view)
+
+        self.stack = Gtk.Stack(transition_type=Gtk.StackTransitionType.CROSSFADE)
+        self.toasts.set_child(self.stack)
+
+        page = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=24,
+                       margin_top=18, margin_bottom=24, margin_start=16, margin_end=16)
+        if len(paths) == 1:
+            what = t("Send “%s” to:", os.path.basename(paths[0].rstrip("/")))
+        else:
+            what = t("Send %s items to:", len(paths))
+        self.computers = Adw.PreferencesGroup(title=what)
+        self.spinner = Gtk.Spinner()
+        self.computers.set_header_suffix(self.spinner)
+        page.append(self.computers)
+        clamp = Adw.Clamp(maximum_size=520, child=page)
+        self.stack.add_named(Gtk.ScrolledWindow(child=clamp, hscrollbar_policy=Gtk.PolicyType.NEVER), "pick")
+
+        self.status = Adw.StatusPage(icon_name="document-send-symbolic")
+        self.progress = Gtk.ProgressBar(show_text=True, margin_start=32, margin_end=32)
+        self.done_buttons = Gtk.Box(spacing=12, halign=Gtk.Align.CENTER)
+        open_folder = Gtk.Button(label=t("Open folder"), css_classes=["pill"])
+        open_folder.connect("clicked", lambda _b: self.open_target())
+        close = Gtk.Button(label=t("Close"), css_classes=["pill", "suggested-action"])
+        close.connect("clicked", lambda _b: self.close())
+        self.done_buttons.append(open_folder)
+        self.done_buttons.append(close)
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=24)
+        box.append(self.progress)
+        box.append(self.done_buttons)
+        self.status.set_child(box)
+        self.stack.add_named(self.status, "progress")
+
+        self.target = None
+        in_background(discover_computers, self.show_computers)
+        self.spinner.start()
+
+    def show_computers(self, computers):
+        self.spinner.stop()
+        for row in self.rows:
+            self.computers.remove(row)
+        self.rows = []
+        if not computers:
+            self.add_row(Adw.ActionRow(
+                title=t("No computers found"),
+                subtitle=t("Check that the other computer is on, on the same network, and set up.")))
+        for name, host, ip in computers:
+            row = Adw.ActionRow(title=name, subtitle=f"{host} · {ip}", use_markup=False, activatable=True)
+            row.add_prefix(Gtk.Image(icon_name="computer-symbolic", pixel_size=32))
+            button = Gtk.Button(label=t("Send"), valign=Gtk.Align.CENTER, css_classes=["suggested-action"])
+            button.connect("clicked", lambda _b, h=host: self.send_to(h))
+            row.add_suffix(button)
+            row.connect("activated", lambda _r, h=host: self.send_to(h))
+            self.add_row(row)
+        add = Adw.ActionRow(title=t("Connect by name or IP"), activatable=True)
+        add.add_prefix(Gtk.Image(icon_name="list-add-symbolic"))
+        add.add_suffix(Gtk.Image(icon_name="go-next-symbolic"))
+        add.connect("activated", lambda _r: self.ask_address())
+        self.add_row(add)
+
+    def add_row(self, row):
+        self.computers.add(row)
+        self.rows.append(row)
+
+    def ask_address(self):
+        entry = Adw.EntryRow(title=t("Name or IP"), activates_default=True)
+        dialog = self.dialog(t("Connect by name or IP"), t("For example, laptop.local or 192.168.1.20"),
+                             extra=self.boxed(entry), ok=t("Send"))
+
+        def answered(_d, response):
+            if response != "ok":
+                return
+            host = entry.get_text().strip()
+            if not SAFE_NAME.match(host):
+                self.show_error(t("That address isn't valid"),
+                                t("Use a name such as laptop.local or an IP address such as 192.168.1.20."))
+                return
+            self.send_to(host)
+        dialog.connect("response", answered)
+        dialog.present(self)
+
+    def send_to(self, host):
+        self.verify_then(host, lambda: self.with_username(host, lambda user, _b: self.connect_to(host, user)))
+
+    def connect_to(self, host, user):
+        """Mounts the other computer's home folder the way Files does, asking for the password if needed."""
+        self.show_progress(t("Connecting to %s…", host), "")
+        home = Gio.File.new_for_uri(remote_url(host, user))
+        home.mount_enclosing_volume(Gio.MountMountFlags.NONE, Gtk.MountOperation(parent=self), None,
+                                    self.connected, host)
+
+    def connected(self, home, result, host):
+        try:
+            home.mount_enclosing_volume_finish(result)
+        except GLib.Error as error:
+            if not error.matches(Gio.io_error_quark(), Gio.IOErrorEnum.ALREADY_MOUNTED):
+                self.failed(error.message)
+                return
+        self.show_progress(t("Sending to %s…", host), "")
+
+        def report(copied, total):
+            GLib.idle_add(self.progress.set_fraction, copied / total)
+
+        def work():
+            try:
+                return send_files(self.paths, home, report)
+            except GLib.Error as error:
+                return error
+
+        def done(result):
+            if isinstance(result, GLib.Error):
+                self.failed(result.message)
+                return
+            self.target = result
+            self.progress.set_visible(False)
+            self.done_buttons.set_visible(True)
+            self.status.set_icon_name("emblem-ok-symbolic")
+            self.status.set_title(t("Sent"))
+            self.status.set_description(t("Saved in “%s” on %s.", result.get_basename(), host))
+        in_background(work, done)
+
+    def show_progress(self, title, description):
+        self.status.set_icon_name("document-send-symbolic")
+        self.status.set_title(title)
+        self.status.set_description(description)
+        self.progress.set_fraction(0)
+        self.progress.set_visible(True)
+        self.done_buttons.set_visible(False)
+        self.stack.set_visible_child_name("progress")
+
+    def failed(self, message):
+        self.stack.set_visible_child_name("pick")
+        self.show_error(t("Couldn't send the files"), message)
+
+    def open_target(self):
+        subprocess.Popen(["nautilus", "--new-window", self.target.get_uri()], start_new_session=True,
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        self.close()
 
 
 # ---------- Application ----------
+
+def set_up_style():
+    """Icon, layout direction and the amber accent, for every Karvan window."""
+    Gtk.Window.set_default_icon_name("karvan")
+    Gtk.Widget.set_default_direction(Gtk.TextDirection.RTL if UI_LANG == "fa" else Gtk.TextDirection.LTR)
+    # libadwaita 1.5 (Ubuntu 24.04) lays the page out far too narrow when no DPI is set,
+    # as in sessions without GNOME's settings daemon
+    settings = Gtk.Settings.get_default()
+    if settings.props.gtk_xft_dpi <= 0:
+        settings.props.gtk_xft_dpi = 96 * 1024
+    display = Gdk.Display.get_default()
+    css = Gtk.CssProvider()
+    css.load_from_string(CSS)
+    Gtk.StyleContext.add_provider_for_display(display, css, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+
+    accent = Gtk.CssProvider()
+    Gtk.StyleContext.add_provider_for_display(display, accent, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+    styles = Adw.StyleManager.get_default()
+    styles.connect("notify::dark", lambda m, _p: accent.load_from_string(accent_css(m.get_dark())))
+    accent.load_from_string(accent_css(styles.get_dark()))
+
+
+class SendApp(Adw.Application):
+    """Karvan's "send" mode. It runs on its own, next to an open main window if there is one."""
+
+    def __init__(self, paths):
+        super().__init__(application_id=APP_ID, flags=Gio.ApplicationFlags.NON_UNIQUE)
+        self.paths = [p for p in paths if os.path.exists(p)]
+        self.connect("startup", lambda _a: set_up_style())
+        self.connect("activate", lambda _a: self.show_window())
+
+    def show_window(self):
+        if not self.paths:
+            dialog = Adw.AlertDialog(heading=t("Nothing to send"),
+                                     body=t("Right-click files on this computer in Files, then choose "
+                                            "Scripts → Send to another computer."))
+            dialog.add_response("close", t("OK"))
+            window = Adw.ApplicationWindow(application=self, title="Karvan", default_width=360,
+                                           default_height=200)
+            dialog.connect("closed", lambda _d: window.close())
+            window.present()
+            dialog.present(window)
+            return
+        SendWindow(self, self.paths).present()
 
 class KarvanApp(Adw.Application):
     def __init__(self):
@@ -663,22 +938,8 @@ class KarvanApp(Adw.Application):
         self.connect("startup", lambda _a: self.on_startup())
 
     def on_startup(self):
-        Gtk.Window.set_default_icon_name("karvan")
-        # libadwaita 1.5 (Ubuntu 24.04) lays the page out far too narrow when no DPI is set,
-        # as in sessions without GNOME's settings daemon
-        settings = Gtk.Settings.get_default()
-        if settings.props.gtk_xft_dpi <= 0:
-            settings.props.gtk_xft_dpi = 96 * 1024
-        display = Gdk.Display.get_default()
-        css = Gtk.CssProvider()
-        css.load_from_string(CSS)
-        Gtk.StyleContext.add_provider_for_display(display, css, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
-
-        accent = Gtk.CssProvider()
-        Gtk.StyleContext.add_provider_for_display(display, accent, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
-        styles = Adw.StyleManager.get_default()
-        styles.connect("notify::dark", lambda m, _p: accent.load_from_string(accent_css(m.get_dark())))
-        accent.load_from_string(accent_css(styles.get_dark()))
+        set_up_style()
+        install_send_script()
         language = Gio.SimpleAction.new("language", GLib.VariantType.new("s"))
         language.connect("activate", lambda _a, value: self.set_language(value.get_string()))
         self.add_action(language)
@@ -701,6 +962,7 @@ class KarvanApp(Adw.Application):
         CONFIG_DIR.mkdir(parents=True, exist_ok=True)
         LANGUAGE_FILE.write_text(language + "\n")
         UI_LANG = language
+        install_send_script()
         old, self.window = self.window, None
         self.show_window()
         old.destroy()
@@ -850,6 +1112,21 @@ FA = {
     "Browse the files of your other Ubuntu computers at home, right in Files.":
         "فایل‌های کامپیوترهای اوبونتوی دیگر خانه را مستقیم در Files ببینید.",
     "Icon": "آیکون",
+    "Send to another computer (Karvan)": "ارسال به کامپیوتر دیگر (Karvan)",
+    "Send with Karvan": "ارسال با Karvan",
+    "Send “%s” to:": "ارسال «%s» به:",
+    "Send %s items to:": "ارسال %s مورد به:",
+    "Open folder": "باز کردن پوشه",
+    "Close": "بستن",
+    "Send": "ارسال",
+    "Connecting to %s…": "در حال اتصال به %s…",
+    "Sending to %s…": "در حال ارسال به %s…",
+    "Sent": "ارسال شد",
+    "Saved in “%s” on %s.": "در پوشه‌ی «%s» روی %s ذخیره شد.",
+    "Couldn't send the files": "فایل‌ها ارسال نشدند",
+    "Nothing to send": "چیزی برای ارسال نیست",
+    "Right-click files on this computer in Files, then choose Scripts → Send to another computer.":
+        "در Files روی فایل‌های این کامپیوتر کلیک راست کنید و Scripts ← ارسال به کامپیوتر دیگر را انتخاب کنید.",
     "From “Head of Asiatic Camel”, an engraving in Bayard Taylor's “Central Asia” (1891). Public domain.":
         "برگرفته از «Head of Asiatic Camel»، حکاکی‌ای در کتاب «Central Asia» نوشته‌ی Bayard Taylor (۱۸۹۱). "
         "مالکیت عمومی.",
@@ -857,4 +1134,7 @@ FA = {
 
 
 if __name__ == "__main__":
-    KarvanApp().run(None)
+    if sys.argv[1:2] == ["--send"]:
+        SendApp(sys.argv[2:]).run(None)
+    else:
+        KarvanApp().run(None)

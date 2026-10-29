@@ -20,6 +20,8 @@ show their files, and GTK 4 with libadwaita for its window.
 - **Open files on another computer.** Lists the Karvan computers it finds on
   your network and opens the one you pick in Files. It remembers your username
   on each computer and can add it to the Files sidebar.
+- **Send to another computer.** Right-click files or folders in Files to send
+  them to another computer's Downloads folder.
 - **Passwordless login.** Creates an SSH key if needed and copies it to the
   other computer.
 - **Key login only.** Turns off SSH password login on this computer.
@@ -94,6 +96,17 @@ Once both computers are set up, they can see each other.
 
 Its home folder opens in Files. You can copy, open and edit the files as if
 they were on your own computer.
+
+### Send files to another computer
+
+1. In Files, select the files or folders you want to send and right-click them.
+2. Choose **Scripts → Send to another computer (Karvan)**.
+3. Click **Send** next to the computer.
+
+They go to the **Downloads** folder on that computer (or its home folder if it
+has none). Nothing there is replaced: if a file with the same name exists, the
+new one is saved as `name (2)`. The **Scripts** menu item appears after you've
+opened Karvan once.
 
 ### Recommended: switch to key login
 

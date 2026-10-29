@@ -19,6 +19,11 @@ LAUNCHER_BIN="$HOME/.local/bin/karvan"
 LAUNCHER_ICON_THEME="$HOME/.local/share/icons/hicolor"
 LAUNCHER_ICON="$LAUNCHER_ICON_THEME/256x256/apps/karvan.png"
 LAUNCHER_UI="$HOME/.local/share/karvan/karvan-ui.py"
+# Where the .deb package puts the window
+PACKAGE_UI="/usr/share/karvan/karvan-ui.py"
+# The window adds a "Send to another computer" script for Files here, marked with this line
+NAUTILUS_SCRIPTS="$HOME/.local/share/nautilus/scripts"
+SEND_SCRIPT_MARK="# Added by Karvan"
 APP_ID="io.github.moxart.Karvan"
 # Named after the window's app ID, so GNOME puts the window under this launcher's icon in the dock
 LAUNCHER_DESKTOP="$HOME/.local/share/applications/$APP_ID.desktop"
@@ -127,12 +132,13 @@ launch_window() {
   local ui
   ui="$(dirname "$SELF")/karvan-ui.py"
   [ -f "$ui" ] || ui="$LAUNCHER_UI"
+  [ -f "$ui" ] || ui="$PACKAGE_UI"
   if ! python3 -c "$UI_CHECK" 2>/dev/null; then
     local text="Karvan needs GTK 4 and libadwaita 1.5 or newer (Ubuntu 24.04 or newer). Install them with:\n\nsudo apt install python3-gi gir1.2-gtk-4.0 gir1.2-adw-1"
     zenity --error --title="$APP" --width=420 --text="$text" 2>/dev/null || echo -e "$text" >&2
     exit 1
   fi
-  KARVAN_SH="$SELF" exec python3 "$ui"
+  KARVAN_SH="$SELF" exec python3 "$ui" "$@"
 }
 
 # An existing icon cache hides icons it doesn't list, so rebuild it; with no cache, icons are found directly
@@ -183,6 +189,10 @@ EOF
 uninstall_launcher() {
   rm -f "$LAUNCHER_BIN" "$LAUNCHER_DESKTOP" "$OLD_LAUNCHER_DESKTOP" "$LAUNCHER_ICON" "$LAUNCHER_UI"
   rmdir "$(dirname "$LAUNCHER_UI")" 2>/dev/null || true
+  local script
+  for script in "$NAUTILUS_SCRIPTS"/*; do
+    [ -f "$script" ] && grep -qF "$SEND_SCRIPT_MARK" "$script" && rm -f "$script"
+  done
   refresh_icon_cache
   echo "Removed $APP from your applications menu."
   echo "System settings made by Setup are left in place; see README.md to remove them."
@@ -212,5 +222,5 @@ case "${1:-}" in
     ;;
   --install)    install_launcher ;;
   --uninstall)  uninstall_launcher ;;
-  *)            launch_window ;;
+  *)            launch_window "$@" ;;
 esac
