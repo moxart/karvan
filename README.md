@@ -1,5 +1,7 @@
 <img src="karvan.png" alt="Karvan icon: an engraving of a Bactrian camel's head" width="128">
 
+**English** | [فارسی](README.fa.md)
+
 # Karvan
 
 Browse the files of another Ubuntu computer on your home network from the
@@ -169,7 +171,13 @@ Some risks remain:
 
 ## Uninstall
 
-Remove Karvan from the applications menu:
+If you installed the .deb package:
+
+```bash
+sudo apt remove karvan
+```
+
+If you installed from the source code:
 
 ```bash
 karvan --uninstall
@@ -219,7 +227,7 @@ Setup has to download packages, so check your internet connection. To see the
 full error, run the setup step from a terminal:
 
 ```bash
-pkexec ~/.local/bin/karvan --root-setup
+pkexec "$(command -v karvan)" --root-setup
 ```
 
 **Cannot log in after enabling Key login only**
