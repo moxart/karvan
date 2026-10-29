@@ -23,6 +23,8 @@ gi.require_version("Adw", "1")
 from gi.repository import Adw, Gdk, Gio, GLib, GObject, Gtk  # noqa: E402
 
 APP_ID = "io.github.moxart.Karvan"
+# The release version; packaging/build-deb.sh reads it from here
+VERSION = "1.0.0"
 SERVICE_TYPE = "_sftp-ssh._tcp"
 USER = getpass.getuser()
 HOME = Path.home()
@@ -993,7 +995,7 @@ class KarvanApp(Adw.Application):
 
     def on_about(self):
         about = Adw.AboutDialog(
-            application_name="Karvan", application_icon="karvan",
+            application_name="Karvan", application_icon="karvan", version=VERSION,
             developer_name="Patrick Der Avakians", license_type=Gtk.License.MIT_X11,
             website="https://github.com/moxart/karvan",
             comments=t("Browse the files of your other Ubuntu computers at home, right in Files."))

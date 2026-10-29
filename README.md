@@ -47,27 +47,34 @@ show their files, and GTK 4 with libadwaita for its window.
 
 Do these steps on **each** computer.
 
-### 1. Get Karvan
+### 1. Install Karvan
+
+**Easiest: the .deb package.** Download `karvan_<version>_all.deb` from the
+[Releases page](https://github.com/moxart/karvan/releases), then double-click
+it, or run:
+
+```bash
+sudo apt install ./karvan_*_all.deb
+```
+
+**Or from the source code**, without administrator rights:
 
 ```bash
 git clone https://github.com/moxart/karvan.git
 cd karvan
-```
-
-If `git` is not installed, either install it with `sudo apt install git`, or
-download the ZIP from GitHub (**Code → Download ZIP**) and extract it.
-
-### 2. Add it to the applications menu
-
-```bash
 bash karvan.sh --install
 ```
 
 This copies Karvan to `~/.local/bin/karvan` and `~/.local/share/karvan`,
-installs its icon and adds **Karvan** to your applications menu. You can delete the cloned folder
-afterwards.
+installs its icon and adds **Karvan** to your applications menu. You can delete
+the cloned folder afterwards. If `git` is not installed, install it with
+`sudo apt install git`, or download the ZIP from GitHub
+(**Code → Download ZIP**) and extract it.
 
-### 3. Set up the computer
+To build the package yourself, run `bash packaging/build-deb.sh`; it's saved in
+`dist/`.
+
+### 2. Set up the computer
 
 Open **Karvan** from the applications menu and click **Set up** under
 **This computer**. Enter your administrator password when asked.
