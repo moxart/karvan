@@ -187,6 +187,11 @@ EOF
 }
 
 uninstall_launcher() {
+  # This removes only what --install put in your home folder, not the .deb package.
+  if [ "$SELF" = /usr/bin/karvan ]; then
+    echo "$APP was installed from the .deb package. To remove it, run: sudo apt remove karvan"
+    exit 1
+  fi
   rm -f "$LAUNCHER_BIN" "$LAUNCHER_DESKTOP" "$OLD_LAUNCHER_DESKTOP" "$LAUNCHER_ICON" "$LAUNCHER_UI"
   rmdir "$(dirname "$LAUNCHER_UI")" 2>/dev/null || true
   local script
