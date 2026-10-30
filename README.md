@@ -22,6 +22,8 @@ show their files, and GTK 4 with libadwaita for its window.
 - **Open files on another computer.** Lists the Karvan computers it finds on
   your network and opens the one you pick in Files. It remembers your username
   on each computer and can add it to the Files sidebar.
+- **Other drives.** Opens any drive on the other computer, such as a second disk
+  or a USB drive, not just its home folder.
 - **Send to another computer.** Right-click files or folders in Files to send
   them to another computer's Downloads folder.
 - **Passwordless login.** Creates an SSH key if needed and copies it to the
@@ -116,6 +118,20 @@ They go to the **Downloads** folder on that computer (or its home folder if it
 has none). Nothing there is replaced: if a file with the same name exists, the
 new one is saved as `name (2)`. The **Scripts** menu item appears after you've
 opened Karvan once.
+
+### Open another drive
+
+1. Open the ⋮ menu next to the computer and choose **Drives**.
+2. Click **Open** next to the drive you want.
+
+Only drives that are mounted on that computer can be opened. To mount one, open
+Karvan on that computer, expand **Drives** under **This computer**, and click
+**Mount**. After a restart, a drive stays unmounted until someone mounts it
+again. To keep one always available, turn on **Mount at system startup** for
+it in the **Disks** app on that computer (⚙ → **Edit Mount Options**).
+
+You see the files your account on that computer is allowed to see. With
+**Share only one folder** turned on, that computer's other drives are hidden too.
 
 ### Recommended: switch to key login
 

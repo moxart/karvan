@@ -24,7 +24,7 @@ from gi.repository import Adw, Gdk, Gio, GLib, GObject, Gtk  # noqa: E402
 
 APP_ID = "io.github.moxart.Karvan"
 # The release version; packaging/build-deb.sh reads it from here
-VERSION = "1.0.0"
+VERSION = "1.1.0"
 SERVICE_TYPE = "_sftp-ssh._tcp"
 USER = getpass.getuser()
 HOME = Path.home()
@@ -330,6 +330,100 @@ def send_files(paths, home, report):
     return target
 
 
+# ---------- Drives ----------
+
+# Partitions with none of your files: EFI system, Windows recovery, Microsoft reserved (GPT, then MBR)
+HIDDEN_PART_TYPES = {"c12a7328-f81f-11d2-ba4b-00a0c93ec93b", "de94bba4-06d1-4d40-a16a-bfd50179d6ac",
+                     "e3c9e316-0b5c-4db8-817d-f92df00215ae", "0xef", "0x27"}
+# Parts of something bigger: swap, and combined volumes that show up as their own device
+MEMBER_FS_TYPES = {"swap", "LVM2_member", "linux_raid_member", "zfs_member"}
+ENCRYPTED_FS_TYPES = {"crypto_LUKS", "BitLocker"}
+NOT_DRIVES = re.compile(r"^(loop|ram|zram|sr|fd)\d|boot\d+$|rpmb$")
+HIDDEN_MOUNTS = re.compile(r"^/(boot|efi)(/|$)|^/(snap|var/snap)/")
+
+
+def read_drives(read, listdir):
+    """A computer's drives, from its /proc and udev files, so it works the same over SFTP:
+    read(path) returns a file's text and listdir(path) a folder's names. Returns dicts with the
+    device name, label, size in bytes, mount point (None if not mounted) and whether it's a locked
+    encrypted drive. Leaves out snaps, boot partitions, swap and parts of combined volumes."""
+    mounts = {}
+    for line in read("/proc/mounts").splitlines():
+        device, point = line.split()[:2]
+        point = re.sub(r"\\([0-7]{3})", lambda m: chr(int(m[1], 8)), point)
+        if device.startswith("/dev/") and len(point) < len(mounts.get(device, point + "/")):
+            mounts[device] = point
+
+    partitions = {}
+    for line in read("/proc/partitions").splitlines()[2:]:
+        major, minor, blocks, name = line.split()
+        partitions[name] = (int(blocks) * 1024, f"b{major}:{minor}")
+
+    drives = []
+    for name, (size, udev_id) in partitions.items():
+        # Skip whole disks that have partitions; their partitions are listed instead
+        if NOT_DRIVES.search(name) or any(re.fullmatch(re.escape(name) + r"p?\d+", other)
+                                          for other in partitions):
+            continue
+        try:
+            props = dict(line[2:].split("=", 1) for line in read(f"/run/udev/data/{udev_id}").splitlines()
+                         if line.startswith("E:") and "=" in line)
+        except (OSError, GLib.Error):
+            props = {}
+        device = f"/dev/mapper/{props['DM_NAME']}" if "DM_NAME" in props else f"/dev/{name}"
+        point = mounts.get(device) or mounts.get(f"/dev/{name}")
+        fs_type = props.get("ID_FS_TYPE", "")
+        if point and HIDDEN_MOUNTS.search(point):
+            continue
+        if not point and (not fs_type or fs_type in MEMBER_FS_TYPES
+                          or props.get("ID_PART_ENTRY_TYPE", "").lower() in HIDDEN_PART_TYPES):
+            continue
+        locked = fs_type in ENCRYPTED_FS_TYPES
+        if locked:
+            try:
+                if listdir(f"/sys/class/block/{name}/holders"):
+                    continue  # unlocked: the unlocked drive is listed instead
+            except (OSError, GLib.Error):
+                pass
+        label = re.sub(r"\\x([0-9a-fA-F]{2})", lambda m: chr(int(m[1], 16)), props.get("ID_FS_LABEL_ENC", ""))
+        drives.append({"name": name, "label": label, "size": size, "mount": point, "locked": locked})
+    drives.sort(key=lambda d: (d["mount"] is None, d["mount"] or d["name"]))
+    return drives
+
+
+def local_drives():
+    return read_drives(lambda path: Path(path).read_text(errors="replace"), os.listdir)
+
+
+def remote_drives(root):
+    """The drives of the computer root (an sftp:// Gio.File) is on. Raises GLib.Error if its
+    files outside the home folder can't be read, as with "Share only one folder"."""
+    def read(path):
+        return root.resolve_relative_path(path.lstrip("/")).load_contents(None)[1].decode(errors="replace")
+
+    def listdir(path):
+        children = root.resolve_relative_path(path.lstrip("/")).enumerate_children(
+            "standard::name", Gio.FileQueryInfoFlags.NONE, None)
+        return [info.get_name() for info in children]
+    return read_drives(read, listdir)
+
+
+def drive_title(drive):
+    if drive["label"]:
+        return drive["label"]
+    if drive["mount"] == "/":
+        return t("System disk")
+    return os.path.basename(drive["mount"]) if drive["mount"] else drive["name"]
+
+
+def drive_subtitle(drive):
+    if drive["locked"]:
+        state = t("Encrypted")
+    else:
+        state = drive["mount"] or t("Not mounted")
+    return f"{drive['name']} · {GLib.format_size(drive['size'])} · {state}"
+
+
 # ---------- Window ----------
 
 class ConnectionFlow:
@@ -423,6 +517,21 @@ class ConnectionFlow:
         dialog.connect("response", answered)
         dialog.present(self)
 
+    def mount_then(self, host, user, next_step):
+        """Connects to the other computer the way Files does, asking for the password if needed,
+        then calls next_step(home, error_message) with error_message None once connected."""
+        home = Gio.File.new_for_uri(remote_url(host, user))
+
+        def mounted(_file, result):
+            try:
+                home.mount_enclosing_volume_finish(result)
+            except GLib.Error as error:
+                if not error.matches(Gio.io_error_quark(), Gio.IOErrorEnum.ALREADY_MOUNTED):
+                    next_step(home, error.message)
+                    return
+            next_step(home, None)
+        home.mount_enclosing_volume(Gio.MountMountFlags.NONE, Gtk.MountOperation(parent=self), None, mounted)
+
     def boxed(self, row):
         group = Adw.PreferencesGroup()
         group.add(row)
@@ -445,6 +554,7 @@ class KarvanWindow(ConnectionFlow, Adw.ApplicationWindow):
         super().__init__(application=app, title="Karvan", default_width=500, default_height=660)
         self.computer_rows = []
         self.busy_toggle = False
+        self.drives_open = False
 
         self.toasts = Adw.ToastOverlay()
         view = Adw.ToolbarView()
@@ -466,7 +576,8 @@ class KarvanWindow(ConnectionFlow, Adw.ApplicationWindow):
         clamp = Adw.Clamp(maximum_size=560, child=page)
         self.toasts.set_child(Gtk.ScrolledWindow(child=clamp, hscrollbar_policy=Gtk.PolicyType.NEVER))
 
-        for name, handler in (("open", self.on_open), ("passwordless", self.on_passwordless),
+        for name, handler in (("open", self.on_open), ("drives", self.on_drives),
+                              ("passwordless", self.on_passwordless),
                               ("forget-username", self.on_forget_username)):
             action = Gio.SimpleAction.new(name, GLib.VariantType.new("s"))
             action.connect("activate", lambda _a, host, h=handler: h(host.get_string()))
@@ -544,6 +655,9 @@ class KarvanWindow(ConnectionFlow, Adw.ApplicationWindow):
         row.add_suffix(open_button)
 
         menu = Gio.Menu()
+        item = Gio.MenuItem.new(t("Drives"), None)
+        item.set_action_and_target_value("win.drives", GLib.Variant.new_string(host))
+        menu.append_item(item)
         item = Gio.MenuItem.new(t("Passwordless login"), None)
         item.set_action_and_target_value("win.passwordless", GLib.Variant.new_string(host))
         menu.append_item(item)
@@ -585,6 +699,56 @@ class KarvanWindow(ConnectionFlow, Adw.ApplicationWindow):
                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             self.toast(t("Opening %s in Files…", host))
         self.verify_then(host, lambda: self.with_username(host, open_files, offer_bookmark=True))
+
+    def on_drives(self, host):
+        def connected(home, error):
+            if error:
+                self.show_error(t("Couldn't reach %s", host), error)
+                return
+            root = home.resolve_relative_path("/")
+
+            def work():
+                try:
+                    return remote_drives(root)
+                except GLib.Error:
+                    return None
+            in_background(work, lambda drives: self.show_remote_drives(host, root, drives))
+
+        def connect(user, _bookmark):
+            self.toast(t("Connecting to %s…", host))
+            self.mount_then(host, user, connected)
+        self.verify_then(host, lambda: self.with_username(host, connect))
+
+    def show_remote_drives(self, host, root, drives):
+        if drives is None:
+            self.show_error(t("Can't see the drives on %s", host),
+                            t("It may share only one folder. To see its drives, turn off "
+                              "“Share only one folder” on that computer."))
+            return
+        group = Adw.PreferencesGroup()
+        dialog = Adw.AlertDialog(heading=t("Drives on %s", host), extra_child=Gtk.ScrolledWindow(
+            child=group, propagate_natural_height=True, max_content_height=380,
+            hscrollbar_policy=Gtk.PolicyType.NEVER))
+        dialog.add_response("close", t("Close"))
+
+        def open_drive(mount):
+            location = root.resolve_relative_path(mount.lstrip("/"))
+            subprocess.Popen(["nautilus", "--new-window", location.get_uri()], start_new_session=True,
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            dialog.close()
+
+        for drive in drives:
+            row = Adw.ActionRow(title=drive_title(drive), subtitle=drive_subtitle(drive), use_markup=False)
+            row.add_prefix(Gtk.Image(icon_name="drive-harddisk-symbolic"))
+            if drive["mount"]:
+                button = Gtk.Button(label=t("Open"), valign=Gtk.Align.CENTER, css_classes=["suggested-action"])
+                button.connect("clicked", lambda _b, m=drive["mount"]: open_drive(m))
+                row.add_suffix(button)
+            group.add(row)
+        if any(not drive["mount"] for drive in drives):
+            dialog.set_body(t("To open a drive that isn't mounted, mount it first on %s: "
+                              "in Karvan, under “This computer” → “Drives”.", host))
+        dialog.present(self)
 
     def on_passwordless(self, host):
         def ask_password(user, _bookmark):
@@ -654,6 +818,7 @@ class KarvanWindow(ConnectionFlow, Adw.ApplicationWindow):
         copy.connect("clicked", lambda _b: self.copy_text(code))
         row.add_suffix(copy)
         self.add(self.this_computer, row)
+        self.add(self.this_computer, self.drives_row())
 
         self.security.set_visible(True)
         keys = Adw.SwitchRow(title=t("Key login only"), active=SSHD_KEYS_ONLY.exists(),
@@ -664,6 +829,44 @@ class KarvanWindow(ConnectionFlow, Adw.ApplicationWindow):
                               subtitle=t("Other computers see only the Karvan folder in your home folder"))
         share.connect("notify::active", self.on_share_only)
         self.add(self.security, share)
+
+    def drives_row(self):
+        expander = Adw.ExpanderRow(title=t("Drives"),
+                                   subtitle=t("Other computers can open the drives that are mounted"))
+        expander.add_prefix(Gtk.Image(icon_name="drive-harddisk-symbolic"))
+        expander.set_expanded(self.drives_open)
+        try:
+            drives = local_drives()
+        except OSError:
+            drives = []
+        # Files mounts drives through these volumes; mounting them the same way unlocks encrypted ones too
+        volumes = {volume.get_identifier("unix-device"): volume
+                   for volume in Gio.VolumeMonitor.get().get_volumes()}
+        for drive in drives:
+            row = Adw.ActionRow(title=drive_title(drive), subtitle=drive_subtitle(drive), use_markup=False)
+            volume = volumes.get(f"/dev/{drive['name']}")
+            if not drive["mount"] and volume and volume.can_mount():
+                button = Gtk.Button(label=t("Mount"), valign=Gtk.Align.CENTER)
+                button.connect("clicked", lambda b, v=volume: self.mount_drive(b, v))
+                row.add_suffix(button)
+            expander.add_row(row)
+        return expander
+
+    def mount_drive(self, button, volume):
+        button.set_sensitive(False)
+
+        def mounted(_volume, result):
+            try:
+                volume.mount_finish(result)
+            except GLib.Error as error:
+                button.set_sensitive(True)
+                if not error.matches(Gio.io_error_quark(), Gio.IOErrorEnum.FAILED_HANDLED):
+                    self.show_error(t("Couldn't mount the drive"), error.message)
+                return
+            self.toast(t("Mounted. Other computers can open it now."))
+            self.drives_open = True
+            self.refresh_this_computer()
+        volume.mount(Gio.MountMountFlags.NONE, Gtk.MountOperation(parent=self), None, mounted)
 
     def app_setup(self):
         self.get_application().activate_action("setup", None)
@@ -831,19 +1034,10 @@ class SendWindow(ConnectionFlow, Adw.ApplicationWindow):
         self.verify_then(host, lambda: self.with_username(host, lambda user, _b: self.connect_to(host, user)))
 
     def connect_to(self, host, user):
-        """Mounts the other computer's home folder the way Files does, asking for the password if needed."""
         self.show_progress(t("Connecting to %s…", host), "")
-        home = Gio.File.new_for_uri(remote_url(host, user))
-        home.mount_enclosing_volume(Gio.MountMountFlags.NONE, Gtk.MountOperation(parent=self), None,
-                                    self.connected, host)
+        self.mount_then(host, user, lambda home, error: self.failed(error) if error else self.connected(home, host))
 
-    def connected(self, home, result, host):
-        try:
-            home.mount_enclosing_volume_finish(result)
-        except GLib.Error as error:
-            if not error.matches(Gio.io_error_quark(), Gio.IOErrorEnum.ALREADY_MOUNTED):
-                self.failed(error.message)
-                return
+    def connected(self, home, host):
         self.show_progress(t("Sending to %s…", host), "")
 
         def report(copied, total):
@@ -1129,6 +1323,23 @@ FA = {
     "Nothing to send": "چیزی برای ارسال نیست",
     "Right-click files on this computer in Files, then choose Scripts → Send to another computer.":
         "در Files روی فایل‌های این کامپیوتر کلیک راست کنید و Scripts ← ارسال به کامپیوتر دیگر را انتخاب کنید.",
+    "Drives": "درایوها",
+    "Other computers can open the drives that are mounted":
+        "کامپیوترهای دیگر درایوهایی را که mount شده‌اند باز می‌کنند",
+    "System disk": "دیسک سیستم",
+    "Encrypted": "رمزگذاری‌شده",
+    "Not mounted": "mount نشده",
+    "Mount": "Mount",
+    "Couldn't mount the drive": "درایو mount نشد",
+    "Mounted. Other computers can open it now.": "mount شد. حالا کامپیوترهای دیگر می‌توانند بازش کنند.",
+    "Drives on %s": "درایوهای %s",
+    "Can't see the drives on %s": "درایوهای %s دیده نمی‌شوند",
+    "It may share only one folder. To see its drives, turn off “Share only one folder” on that computer.":
+        "شاید فقط یک پوشه را به اشتراک گذاشته باشد. برای دیدن درایوهایش، «اشتراک فقط یک پوشه» را "
+        "روی همان کامپیوتر خاموش کنید.",
+    "To open a drive that isn't mounted, mount it first on %s: in Karvan, under “This computer” → “Drives”.":
+        "برای باز کردن درایوی که mount نشده، اول آن را روی %s mount کنید: در Karvan، زیر "
+        "«این کامپیوتر» ← «درایوها».",
     "From “Head of Asiatic Camel”, an engraving in Bayard Taylor's “Central Asia” (1891). Public domain.":
         "برگرفته از «Head of Asiatic Camel»، حکاکی‌ای در کتاب «Central Asia» نوشته‌ی Bayard Taylor (۱۸۹۱). "
         "مالکیت عمومی.",
